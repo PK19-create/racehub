@@ -124,6 +124,8 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 .type-btn{padding:8px 4px;font-size:12px;display:flex;flex-direction:column;align-items:center;gap:3px;border:1px solid var(--line)}
 .type-btn .em{font-size:18px}
 .type-btn.sel{border-color:var(--accent);background:var(--panel2)}
+.tg-head{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:8px 0 4px}
+.lv-wm.passed{opacity:.45}
 
 /* leaflet dark tweak */
 .leaflet-container{font:inherit}
@@ -200,7 +202,12 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
         <div style="display:flex;gap:6px">
           <button class="small" id="btnAddWmMap">+ op kaart</button>
           <button class="small" id="btnAddWmKm">+ op km</button>
+          <button class="small ghost" id="btnWmImport" title="Waymarkers kopiëren uit een andere etappe of koers">⧉</button>
         </div>
+      </div>
+      <div class="row" style="align-items:center;font-size:12px;color:var(--muted)">
+        km 0 om <input id="stT0" type="time" style="width:100px">
+        aan <input id="stSpeed" type="number" min="20" max="60" step="1" style="width:64px" placeholder="40"> km/u → passagetijden
       </div>
     </div>
     <div id="wmList" class="sp-hide"></div>
@@ -219,6 +226,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
   <div class="lv-top">
     <div class="lv-name" id="lvName"></div>
     <div class="lv-status" id="lvStatus">–</div>
+    <button class="small" id="lvClock" title="Tijd, gemiddelde, tijdslimiet en km 0">⏱</button>
     <button class="small" id="lvMapBtn" title="Kaart tonen/verbergen">🗺 Kaart</button>
     <button class="small" id="lvSim" title="Simulatie: rijd virtueel over het parcours">SIM</button>
     <button class="small danger" id="lvExit">✕ Stop</button>
@@ -231,6 +239,8 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
       <div class="lv-num"><div class="v" id="lvKm">–</div><div class="l">km parcours</div></div>
       <div class="lv-num orange"><div class="v" id="lvToGo">–</div><div class="l">km te gaan</div></div>
       <div class="lv-num"><div class="v" id="lvSpeed">–</div><div class="l">km/u</div></div>
+      <div class="lv-num"><div class="v" id="lvHm">–</div><div class="l">hm te gaan</div></div>
+      <div class="lv-num"><div class="v" id="lvElapsed" style="font-size:34px">–</div><div class="l">sinds km 0 · <span id="lvAvg">–</span> gem</div></div>
     </div>
     <div class="lv-next" id="lvNext"></div>
     <div class="lv-profwrap"><canvas id="liveProfile"></canvas></div>
@@ -260,8 +270,8 @@ const WM_TYPES = {
   kom:      {label:'Dorpskern',   em:'🏘️', color:'#8a99ab'},
   mat:      {label:'Materiaal',   em:'🔧', color:'#9b59b6'},
   start:    {label:'Start',       em:'🟢', color:'#2ecc71'},
-  finish: {label:'Finish',      em:'🏁', color:'#ffffff'},
-  info:   {label:'Info',        em:'ℹ️', color:'#8a99ab'},
+  finish:   {label:'Finish',      em:'🏁', color:'#ffffff'},
+  info:     {label:'Info',        em:'ℹ️', color:'#8a99ab'},
 };
 
 /* ================= State & storage ================= */
@@ -303,6 +313,47 @@ function totalAscent(track){
     last=p[2];
   }
   return Math.round(up);
+}
+/* groepen voor de waymarker-kiezer */
+const WM_GROUPS=[
+  ['Gevaar',     ['gevaar','bocht','rotonde','smal','spoor','tunnel','brug','kom','afdaling']],
+  ['Essentieel', ['klim','sprint','bonus','kassei','gravel','start','finish']],
+  ['Logistiek',  ['feed','mat','info']],
+];
+function recentTypes(){ try{ return JSON.parse(localStorage.getItem('rh-recent-types'))||[]; }catch(e){ return []; } }
+function pushRecentType(t){
+  const r=[t, ...recentTypes().filter(x=>x!==t)].slice(0,6);
+  try{ localStorage.setItem('rh-recent-types', JSON.stringify(r)); }catch(e){}
+}
+/* sector: lengte + gemiddeld % als endKm gezet is */
+function sectorText(st, w, dists, kz){
+  if(w.endKm==null || isNaN(w.endKm)) return '';
+  const len=w.endKm-w.km;
+  if(len<=0) return '';
+  let txt=len.toFixed(1).replace('.',',')+' km';
+  const p1=pointAtDist(st.track,dists,kz+w.km*1000), p2=pointAtDist(st.track,dists,kz+w.endKm*1000);
+  if(p1&&p2&&p1[2]!=null&&p2[2]!=null){
+    const g=(p2[2]-p1[2])/(len*1000)*100;
+    if(g>0.5) txt+=' @ '+g.toFixed(1).replace('.',',')+'%';
+  }
+  return txt;
+}
+/* verwachte passagetijd o.b.v. 0km-tijd + gem. snelheid */
+function etaText(st, kmRel){
+  if(!st.t0time) return '';
+  const parts=st.t0time.split(':'); if(parts.length<2) return '';
+  const sp=+st.avgSpeed||40;
+  let total=Math.round((+parts[0])*60+(+parts[1]) + (kmRel/sp)*60);
+  total=((total%1440)+1440)%1440;
+  return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0');
+}
+/* routepunten van een sector (voor gekleurde overlay op kaart) */
+function sectorLatLngs(st, dists, kz, w){
+  const a=kz+w.km*1000, b=kz+w.endKm*1000, out=[];
+  const pA=pointAtDist(st.track,dists,a); if(pA) out.push([pA[0],pA[1]]);
+  for(let i=0;i<st.track.length;i++){ if(dists[i]>a && dists[i]<b) out.push([st.track[i][0],st.track[i][1]]); }
+  const pB=pointAtDist(st.track,dists,b); if(pB) out.push([pB[0],pB[1]]);
+  return out;
 }
 /* vast nummer per waymarker (volgorde op km) */
 function wmNumber(st){
@@ -394,6 +445,11 @@ function buildGpx(stage){
     x+='<wpt lat="'+p[0]+'" lon="'+p[1]+'">'+(p[2]!=null?'<ele>'+p[2]+'</ele>':'')+
        '<name>'+esc((wi+1)+' '+t.label.toUpperCase()+' '+(w.name||'')+' @'+w.km.toFixed(1)+'km')+'</name>'+
        (w.note?'<desc>'+esc(w.note)+'</desc>':'')+'<sym>'+esc(t.label)+'</sym></wpt>\n';
+    if(w.endKm!=null && w.endKm>w.km){
+      const pe=pointAtDist(stage.track,dists,kz+w.endKm*1000);
+      if(pe) x+='<wpt lat="'+pe[0]+'" lon="'+pe[1]+'">'+(pe[2]!=null?'<ele>'+pe[2]+'</ele>':'')+
+        '<name>'+esc((wi+1)+' EINDE '+t.label.toUpperCase()+' @'+w.endKm.toFixed(1)+'km')+'</name><sym>'+esc(t.label)+'</sym></wpt>\n';
+    }
   }
   x+='<trk><name>'+esc(stage.name)+'</name><trkseg>\n';
   for(const p of stage.track) x+='<trkpt lat="'+p[0]+'" lon="'+p[1]+'">'+(p[2]!=null?'<ele>'+p[2]+'</ele>':'')+'</trkpt>\n';
@@ -538,6 +594,8 @@ function openStage(raceId, stageId){
   cur={race,stage}; mode='view';
   el('hubView').classList.add('hidden');
   el('stageView').classList.remove('hidden');
+  el('stT0').value=stage.t0time||'';
+  el('stSpeed').value=stage.avgSpeed||'';
   refreshCrumb();
   initMap();
   renderStage(true);
@@ -635,12 +693,23 @@ function renderStage(fit){
   // waymarkers on map
   wmLayer.clearLayers();
   for(const w of sorted){
+    if(w.endKm!=null && w.endKm>w.km){
+      const t=WM_TYPES[w.type]||WM_TYPES.info;
+      const ll=sectorLatLngs(st,dists,kz,w);
+      if(ll.length>1) L.polyline(ll,{color:t.color,weight:8,opacity:.55,interactive:false}).addTo(wmLayer);
+    }
+  }
+  for(const w of sorted){
     const p=pointAtDist(st.track,dists,kz+w.km*1000); if(!p) continue;
     const t=WM_TYPES[w.type]||WM_TYPES.info;
+    const sec=sectorText(st,w,dists,kz);
     const mk=L.marker([p[0],p[1]],{icon:L.divIcon({
       className:'', html:'<div style="position:relative;width:26px;height:26px"><div class="wm-divicon" style="width:26px;height:26px;background:'+t.color+'22;border-color:'+t.color+'">'+t.em+'</div><div class="wm-nr">'+nrs[w.id]+'</div></div>',
       iconSize:[26,26], iconAnchor:[13,13]})});
-    mk.bindPopup('<b>#'+nrs[w.id]+' '+t.em+' '+esc(w.name||t.label)+'</b><br>km '+w.km.toFixed(1)+(w.note?'<br>'+esc(w.note):''));
+    mk.bindPopup('<b>#'+nrs[w.id]+' '+t.em+' '+esc(w.name||t.label)+'</b><br>km '+w.km.toFixed(1)+
+      (sec?' · '+sec:'')+(etaText(st,w.km)?' · ~'+etaText(st,w.km):'')+(w.note?'<br>'+esc(w.note):'')+
+      '<br><a href="https://www.google.com/maps?layer=c&cbll='+p[0]+','+p[1]+'" target="_blank">StreetView</a> · '+
+      '<a href="#" onclick="rhCopy(\''+p[0].toFixed(5)+', '+p[1].toFixed(5)+'\');return false;">kopieer lat/lng</a>');
     mk.on('dblclick',()=>wmModal(w,null));
     mk.addTo(wmLayer);
   }
@@ -651,9 +720,11 @@ function renderStage(fit){
   if(!sorted.length) list.innerHTML='<div class="empty-note" style="padding:16px;font-size:13px">Nog geen waymarkers.<br>Voeg klimmen, sprints, gevaren en bevoorrading toe.</div>';
   for(const w of sorted){
     const t=WM_TYPES[w.type]||WM_TYPES.info;
+    const sec=sectorText(st,w,dists,kz), eta=etaText(st,w.km);
     const div=document.createElement('div'); div.className='wm-item';
     div.innerHTML='<div class="nr-chip">'+nrs[w.id]+'</div><div class="ic" style="background:'+t.color+'22;border:1px solid '+t.color+'">'+t.em+'</div>'+
-      '<div class="nm"><div class="t">'+esc(w.name||t.label)+'</div><div class="s">'+t.label+(w.note?' · '+esc(w.note):'')+'</div></div>'+
+      '<div class="nm"><div class="t">'+esc(w.name||t.label)+(sec?' <span style="color:var(--accent2);font-size:12px">'+sec+'</span>':'')+'</div>'+
+      '<div class="s">'+t.label+(eta?' · ~'+eta:'')+(w.note?' · '+esc(w.note):'')+'</div></div>'+
       '<div class="km">'+w.km.toFixed(1)+'</div>';
     const del=document.createElement('button'); del.className='del'; del.textContent='✕';
     del.onclick=e=>{ e.stopPropagation(); st.waymarkers=st.waymarkers.filter(x=>x.id!==w.id); save(); renderStage(false); };
@@ -677,26 +748,47 @@ function wmModal(w, presetKm){
   const maxKm=(dists[dists.length-1]-kz)/1000;
   const minKm=-kz/1000;
   const isNew=!w;
-  let selType = w? w.type : 'klim';
-  let typeBtns='';
-  for(const k in WM_TYPES) typeBtns+='<button class="type-btn'+(k===selType?' sel':'')+'" data-t="'+k+'"><span class="em">'+WM_TYPES[k].em+'</span>'+WM_TYPES[k].label+'</button>';
+  let selType = w? w.type : (recentTypes()[0]||'klim');
+  const btn=k=>'<button class="type-btn'+(k===selType?' sel':'')+'" data-t="'+k+'"><span class="em">'+WM_TYPES[k].em+'</span>'+WM_TYPES[k].label+'</button>';
+  let groupsHtml='';
+  const rec=recentTypes().filter(k=>WM_TYPES[k]);
+  if(rec.length) groupsHtml+='<div class="tg-head">Recent</div><div class="type-grid">'+rec.map(btn).join('')+'</div>';
+  for(const [gname,keys] of WM_GROUPS)
+    groupsHtml+='<div class="tg-head">'+gname+'</div><div class="type-grid">'+keys.filter(k=>WM_TYPES[k]).map(btn).join('')+'</div>';
   modal(
     '<h2>'+(isNew?'Waymarker toevoegen':'Waymarker bewerken')+'</h2>'+
-    '<label>Type</label><div class="type-grid">'+typeBtns+'</div>'+
+    '<input id="mSearch" placeholder="🔍 Zoek type…" style="margin-bottom:4px">'+
+    '<div id="mGroups" style="max-height:220px;overflow-y:auto">'+groupsHtml+'</div>'+
     '<label>Naam (optioneel)</label><input id="mName" value="'+(w?esc(w.name||''):'')+'" placeholder="bijv. VAMberg">'+
     '<label>Op kilometer ('+minKm.toFixed(1)+' – '+maxKm.toFixed(1)+')'+(kz>0?' · negatief = in neutralisatie':'')+'</label><input id="mKm" type="number" step="0.1" min="'+minKm.toFixed(1)+'" max="'+maxKm.toFixed(1)+'" value="'+((w? w.km : presetKm)||0).toFixed(1)+'">'+
+    '<label>Einde op km (optioneel – maakt er een sector/klim van met lengte en %)</label><input id="mEndKm" type="number" step="0.1" min="'+minKm.toFixed(1)+'" max="'+maxKm.toFixed(1)+'" value="'+(w&&w.endKm!=null? w.endKm.toFixed(1):'')+'" placeholder="bijv. einde klim of kasseistrook">'+
     '<label>Notitie (optioneel)</label><input id="mNote" value="'+(w?esc(w.note||''):'')+'" placeholder="bijv. smal, links voorsorteren">'+
     '<div class="btns"><button class="ghost" onclick="closeModal()">Annuleer</button><button class="primary" id="mSave">Opslaan</button></div>',
     m=>{
       m.querySelectorAll('.type-btn').forEach(b=>b.onclick=()=>{
         selType=b.dataset.t;
-        m.querySelectorAll('.type-btn').forEach(x=>x.classList.toggle('sel',x===b));
+        m.querySelectorAll('.type-btn').forEach(x=>x.classList.toggle('sel',x.dataset.t===selType));
+      });
+      m.querySelector('#mSearch').addEventListener('input',e=>{
+        const q=e.target.value.toLowerCase();
+        m.querySelectorAll('#mGroups .type-btn').forEach(b=>{
+          b.style.display = WM_TYPES[b.dataset.t].label.toLowerCase().includes(q)? '':'none';
+        });
+        m.querySelectorAll('#mGroups .tg-head').forEach(h=>{
+          const grid=h.nextElementSibling;
+          const any=[...grid.querySelectorAll('.type-btn')].some(b=>b.style.display!=='none');
+          h.style.display=any?'':'none'; grid.style.display=any?'':'none';
+        });
       });
       m.querySelector('#mSave').onclick=()=>{
         const km=Math.max(minKm,Math.min(maxKm,+m.querySelector('#mKm').value||0));
-        const data={type:selType,name:m.querySelector('#mName').value.trim(),km,note:m.querySelector('#mNote').value.trim()};
+        const evRaw=m.querySelector('#mEndKm').value;
+        let endKm = evRaw===''? null : Math.max(minKm,Math.min(maxKm,+evRaw));
+        if(endKm!=null && (isNaN(endKm)||endKm<=km)) endKm=null;
+        const data={type:selType,name:m.querySelector('#mName').value.trim(),km,endKm,note:m.querySelector('#mNote').value.trim()};
         if(isNew) st.waymarkers.push({id:uid(),...data});
         else Object.assign(w,data);
+        pushRecentType(selType);
         save(); closeModal(); renderStage(false);
       };
     });
@@ -772,6 +864,16 @@ function drawProfile(){
     if(px(kz)-px(0)>40) ctx.fillText('neutraal', (px(0)+px(kz))/2, PADT+12);
   }
 
+  // sectorbalken onderin
+  for(const w of st.waymarkers){
+    if(w.endKm==null || w.endKm<=w.km) continue;
+    const t=WM_TYPES[w.type]||WM_TYPES.info;
+    const a=Math.max(0,kz+w.km*1000), b=Math.min(totM,kz+w.endKm*1000);
+    if(b<=a) continue;
+    ctx.fillStyle=t.color;
+    ctx.fillRect(px(a), H-PADB-4, px(b)-px(a), 4);
+  }
+
   // waymarkers
   for(const w of st.waymarkers){
     const m=kz+w.km*1000; if(m<0||m>totM) continue;
@@ -829,25 +931,38 @@ function roadbook(){
   const totKm=(dists[dists.length-1]-kz)/1000;
   const rows=[...st.waymarkers].sort((a,b)=>a.km-b.km).map((w,i)=>{
     const t=WM_TYPES[w.type]||WM_TYPES.info;
-    return '<tr><td>'+(i+1)+'</td><td>'+w.km.toFixed(1)+'</td><td>'+(totKm-w.km).toFixed(1)+'</td><td>'+t.em+' '+t.label+'</td><td>'+esc(w.name||'')+'</td><td>'+esc(w.note||'')+'</td></tr>';
+    return '<tr><td>'+(i+1)+'</td><td>'+w.km.toFixed(1)+'</td><td>'+(totKm-w.km).toFixed(1)+'</td><td>'+(etaText(st,w.km)||'')+'</td><td>'+t.em+' '+t.label+'</td><td>'+esc(w.name||'')+'</td><td>'+(sectorText(st,w,dists,kz)||'')+'</td><td>'+esc(w.note||'')+'</td></tr>';
   }).join('');
   const win=window.open('','_blank');
   win.document.write('<html><head><title>Roadbook – '+esc(st.name)+'</title><style>body{font-family:system-ui;padding:24px}h1{font-size:20px}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:13px}th{background:#f2f2f2}</style></head><body>'+
     '<h1>'+esc(cur.race.name)+(cur.race.stages.length>1?' – '+esc(st.name):'')+'</h1>'+
     '<p>'+totKm.toFixed(1)+' km'+(kz>0?' · neutralisatie '+(kz/1000).toFixed(1)+' km':'')+' · '+(st.track.some(p=>p[2]!=null)? totalAscent(st.track)+' hm · ':'')+st.waymarkers.length+' waymarkers</p>'+
-    '<table><tr><th>#</th><th>km</th><th>nog te gaan</th><th>type</th><th>naam</th><th>notitie</th></tr>'+rows+'</table>'+
+    '<table><tr><th>#</th><th>km</th><th>nog te gaan</th><th>tijd</th><th>type</th><th>naam</th><th>lengte</th><th>notitie</th></tr>'+rows+'</table>'+
     '<script>window.print()<\/script></body></html>');
   win.document.close();
 }
 
 /* ================= LIVE view ================= */
-const live={watch:null,lastIdx:0,simT:null,simM:0,speed:0,lastFix:null,wake:null,dists:null,kz:0,totM:0,curM:null,zoomKm:null,follow:true};
+const live={watch:null,lastIdx:0,simT:null,simM:0,speed:0,lastFix:null,wake:null,dists:null,kz:0,totM:0,curM:null,zoomKm:null,follow:true,t0:null,prevM:null,cumAsc:null,totAsc:0,clockT:null};
 
 function enterLive(){
   const st=cur.stage;
   if(!st || !st.track.length){ alert('Laad eerst een route voor deze etappe.'); return; }
   live.dists=cumDist(st.track); live.kz=st.kmZero||0; live.totM=live.dists[live.dists.length-1];
   live.lastIdx=0; live.speed=0; live.lastFix=null; live.curM=null; live.zoomKm=null; live.follow=true;
+  live.t0=null; live.prevM=null;
+  // cumulatieve klimmeters voorberekenen
+  live.cumAsc=new Array(st.track.length).fill(0);
+  { let up=0,lastEle=null;
+    for(let i=0;i<st.track.length;i++){
+      const e=st.track[i][2];
+      if(e!=null){ if(lastEle!=null&&e>lastEle) up+=e-lastEle; lastEle=e; }
+      live.cumAsc[i]=up;
+    }
+    live.totAsc=up;
+  }
+  if(live.clockT) clearInterval(live.clockT);
+  live.clockT=setInterval(()=>{ if(live.t0!=null && live.curM!=null) updateClockTiles(); },5000);
   el('liveView').classList.remove('hidden');
   el('lvName').textContent=cur.race.name+(cur.race.stages.length>1?' · '+st.name:'');
   el('lvStatus').textContent='GPS zoeken…';
@@ -859,6 +974,7 @@ function enterLive(){
 function exitLive(){
   el('liveView').classList.add('hidden');
   if(live.watch!=null && navigator.geolocation){ navigator.geolocation.clearWatch(live.watch); live.watch=null; }
+  if(live.clockT){ clearInterval(live.clockT); live.clockT=null; }
   stopSim();
   if(live.wake){ live.wake.release().catch(()=>{}); live.wake=null; }
 }
@@ -898,6 +1014,7 @@ function updateLive(m){
   const st=cur.stage; live.curM=m;
   if(m==null){
     el('lvKm').textContent='–'; el('lvToGo').textContent='–'; el('lvSpeed').textContent='–';
+    el('lvHm').textContent='–'; el('lvElapsed').textContent='–'; el('lvAvg').textContent='–';
     el('lvNext').innerHTML='<div class="empty-note">Wachten op positie… (of start SIM)</div>';
     el('lvAlert').style.display='none';
     drawLiveProfile(null); return;
@@ -906,19 +1023,30 @@ function updateLive(m){
   el('lvKm').textContent=rel.toFixed(1);
   el('lvToGo').textContent=Math.max(0,(live.totM-m)/1000).toFixed(1);
   el('lvSpeed').textContent=String(Math.round(live.speed));
+  el('lvHm').textContent=String(Math.max(0,Math.round(live.totAsc-(live.cumAsc[live.lastIdx]||0))));
+  // km 0-passage automatisch registreren
+  if(live.t0==null && live.prevM!=null && live.prevM<live.kz && m>=live.kz) live.t0=Date.now();
+  live.prevM=m;
+  updateClockTiles();
   const nrs=wmNumber(st);
-  const upcoming=[...st.waymarkers].map(w=>({...w, absM:live.kz+w.km*1000}))
-    .filter(w=>w.absM>=m-100).sort((a,b)=>a.absM-b.absM).slice(0,8);
+  const all=[...st.waymarkers].map(w=>({...w, absM:live.kz+w.km*1000})).sort((a,b)=>a.absM-b.absM);
+  const upcoming=all.filter(w=>w.absM>=m).slice(0,8);
+  const passedAll=all.filter(w=>w.absM<m);
+  const lastPassed=(passedAll.length && m-passedAll[passedAll.length-1].absM<=500)? passedAll[passedAll.length-1] : null;
   const list=el('lvNext'); list.innerHTML='';
-  if(!upcoming.length) list.innerHTML='<div class="empty-note">Geen waymarkers meer tot de finish.</div>';
-  upcoming.forEach((w,i)=>{
+  const mkRow=(w,cls,distTxt)=>{
     const t=WM_TYPES[w.type]||WM_TYPES.info;
-    const div=document.createElement('div'); div.className='lv-wm'+(i===0?' first':'');
+    const sec=sectorText(st,w,live.dists,live.kz);
+    const div=document.createElement('div'); div.className='lv-wm'+cls;
     div.innerHTML='<div class="nr-chip">'+nrs[w.id]+'</div><div class="ic" style="background:'+t.color+'22;border:2px solid '+t.color+'">'+t.em+'</div>'+
-      '<div class="inf"><div class="t">'+esc(w.name||t.label)+'</div><div class="s">'+t.label+' · km '+w.km.toFixed(1)+(w.note?' · '+esc(w.note):'')+'</div></div>'+
-      '<div class="d">'+Math.max(0,(w.absM-m)/1000).toFixed(1)+' <small>km</small></div>';
+      '<div class="inf"><div class="t">'+esc(w.name||t.label)+(sec?' <span style="font-size:14px;color:var(--accent2)">'+sec+'</span>':'')+'</div>'+
+      '<div class="s">'+t.label+' · km '+w.km.toFixed(1)+(w.note?' · '+esc(w.note):'')+'</div></div>'+
+      '<div class="d">'+distTxt+'</div>';
     list.appendChild(div);
-  });
+  };
+  if(lastPassed) mkRow(lastPassed,' passed','-'+((m-lastPassed.absM)/1000).toFixed(1)+' <small>km</small>');
+  if(!upcoming.length && !lastPassed) list.innerHTML='<div class="empty-note">Geen waymarkers meer tot de finish.</div>';
+  upcoming.forEach((w,i)=>mkRow(w, i===0?' first':'', Math.max(0,(w.absM-m)/1000).toFixed(1)+' <small>km</small>'));
   // aankondiging: eerstvolgende waymarker binnen 1,2 km
   const al=el('lvAlert');
   if(upcoming.length && (upcoming[0].absM-m)<=1200){
@@ -930,6 +1058,70 @@ function updateLive(m){
   } else al.style.display='none';
   drawLiveProfile(m);
   updateLiveMap(m);
+}
+/* tegels: verstreken tijd + gemiddelde sinds km 0 */
+function fmtDur(ms){
+  const s=Math.floor(ms/1000), h=Math.floor(s/3600), mi=Math.floor((s%3600)/60);
+  return h+':'+String(mi).padStart(2,'0');
+}
+function updateClockTiles(){
+  if(live.t0==null || live.curM==null){ el('lvElapsed').textContent='–'; el('lvAvg').textContent='–'; return; }
+  const ms=Date.now()-live.t0;
+  el('lvElapsed').textContent=fmtDur(ms);
+  const kmDone=(live.curM-live.kz)/1000;
+  el('lvAvg').textContent = (ms>60000 && kmDone>0)? (kmDone/(ms/3600000)).toFixed(1)+' km/u' : '–';
+}
+/* ⏱-popup: km 0-tijd, km 0-hier en tijdslimiet-calculator */
+function clockModal(){
+  const st=cur.stage;
+  const t0txt=live.t0? new Date(live.t0).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : 'nog niet geregistreerd';
+  modal(
+    '<h2>⏱ Race-tijd</h2>'+
+    '<label>Km 0 gepasseerd om</label>'+
+    '<div class="row" style="margin-top:0"><span id="ct0" style="padding:8px 0">'+t0txt+'</span>'+
+    '<button class="small primary" id="cNow">Nu!</button></div>'+
+    '<label>Km 0-positie corrigeren</label>'+
+    '<button class="small ghost" id="cHere">📍 Zet km 0 op huidige positie</button>'+
+    '<div style="border-top:1px solid var(--line);margin:14px 0"></div>'+
+    '<h2 style="font-size:15px">Tijdslimiet-calculator</h2>'+
+    '<label>Winnaarstijd (u:mm:ss)</label><input id="cWin" placeholder="bijv. 4:12:30">'+
+    '<label>Percentage</label><input id="cPct" type="number" step="1" min="1" max="30" value="12">'+
+    '<div id="cResult" style="margin-top:10px;font-size:15px;color:var(--accent2)"></div>'+
+    '<div class="btns"><button class="ghost" onclick="closeModal()">Sluiten</button></div>',
+    mo=>{
+      mo.querySelector('#cNow').onclick=()=>{
+        live.t0=Date.now();
+        mo.querySelector('#ct0').textContent=new Date(live.t0).toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        updateClockTiles();
+      };
+      mo.querySelector('#cHere').onclick=()=>{
+        if(live.curM==null){ alert('Nog geen positie bekend.'); return; }
+        if(!confirm('Km 0 op je huidige positie zetten? Alle waymarker-kilometers schuiven mee zodat ze op dezelfde plek blijven.')) return;
+        const delta=(live.curM-(st.kmZero||0))/1000;
+        st.kmZero=live.curM;
+        st.waymarkers.forEach(x=>{ x.km=+(x.km-delta).toFixed(2); if(x.endKm!=null) x.endKm=+(x.endKm-delta).toFixed(2); });
+        save(); live.kz=st.kmZero;
+        updateLive(live.curM);
+        closeModal();
+      };
+      const calc=()=>{
+        const v=mo.querySelector('#cWin').value.trim();
+        const pct=+mo.querySelector('#cPct').value||0;
+        const p=v.split(':').map(Number);
+        if(p.length<2 || p.some(isNaN) || !pct){ mo.querySelector('#cResult').textContent=''; return; }
+        const winSec=p.length===3? p[0]*3600+p[1]*60+p[2] : p[0]*60+p[1];
+        const cutSec=Math.floor(winSec*(1+pct/100));
+        const h=Math.floor(cutSec/3600), mi=Math.floor((cutSec%3600)/60), ss=cutSec%60;
+        let txt='Limiet: '+h+':'+String(mi).padStart(2,'0')+':'+String(ss).padStart(2,'0');
+        if(live.t0!=null){
+          const dl=new Date(live.t0+cutSec*1000);
+          txt+=' · binnen vóór '+dl.toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        }
+        mo.querySelector('#cResult').textContent=txt;
+      };
+      mo.querySelector('#cWin').addEventListener('input',calc);
+      mo.querySelector('#cPct').addEventListener('input',calc);
+    });
 }
 /* meeschuivend profiel: venster van 20 km, positie op 15% */
 function drawLiveProfile(m){
@@ -990,6 +1182,14 @@ function drawLiveProfile(m){
   }
   if(started){ ctx.strokeStyle='#ffffff55'; ctx.lineWidth=1.4; ctx.stroke(); }
   for(const w of st.waymarkers){
+    if(w.endKm==null || w.endKm<=w.km) continue;
+    const t=WM_TYPES[w.type]||WM_TYPES.info;
+    const sa=Math.max(a,kz+w.km*1000), sb=Math.min(b,kz+w.endKm*1000);
+    if(sb<=sa) continue;
+    ctx.fillStyle=t.color;
+    ctx.fillRect(px(sa), H-PB-4, px(sb)-px(sa), 4);
+  }
+  for(const w of st.waymarkers){
     const wm=kz+w.km*1000; if(wm<a||wm>b) continue;
     const t=WM_TYPES[w.type]||WM_TYPES.info;
     ctx.strokeStyle=t.color; ctx.lineWidth=1.2;
@@ -1043,6 +1243,13 @@ function buildLiveMap(){
   lvRoute=L.polyline(st.track.map(p=>[p[0],p[1]]),{color:'#ff6b1a',weight:4,opacity:.9}).addTo(liveMap);
   const dists=live.dists||cumDist(st.track), kz=st.kmZero||0;
   const nrs=wmNumber(st);
+  for(const w of st.waymarkers){
+    if(w.endKm!=null && w.endKm>w.km){
+      const t=WM_TYPES[w.type]||WM_TYPES.info;
+      const ll=sectorLatLngs(st,dists,kz,w);
+      if(ll.length>1) L.polyline(ll,{color:t.color,weight:8,opacity:.55,interactive:false}).addTo(lvWms);
+    }
+  }
   for(const w of st.waymarkers){
     const p=pointAtDist(st.track,dists,kz+w.km*1000); if(!p) continue;
     const t=WM_TYPES[w.type]||WM_TYPES.info;
@@ -1107,6 +1314,8 @@ function updateLiveFromM(m){
 el('btnLive').onclick=enterLive;
 el('lvExit').onclick=exitLive;
 el('lvMapBtn').onclick=toggleLiveMap;
+el('lvClock').onclick=clockModal;
+window.rhCopy=t=>{ (navigator.clipboard? navigator.clipboard.writeText(t) : Promise.reject()).then(()=>{},()=>prompt('Kopieer:',t)); };
 el('lvSim').onclick=()=>{ if(live.simT){ stopSim(); el('lvStatus').textContent='SIM gestopt'; } else startSim(); };
 
 /* ================= Wire up ================= */
@@ -1151,6 +1360,28 @@ el('btnUndoPt').onclick=()=>{ const st=cur.stage; if(st.track.length){ st.track.
 el('btnClearRoute').onclick=()=>{ if(confirm('Hele route wissen? Waymarkers blijven staan (op km).')){ cur.stage.track=[]; cur.stage.kmZero=0; save(); renderStage(false);} };
 el('btnAddWmMap').onclick=()=>setMode('wm-map');
 el('btnAddWmKm').onclick=()=>{ if(!cur.stage.track.length){alert('Laad of teken eerst een route.');return;} wmModal(null, 0); };
+el('stT0').addEventListener('change',()=>{ cur.stage.t0time=el('stT0').value; save(); renderStage(false); });
+el('stSpeed').addEventListener('change',()=>{ cur.stage.avgSpeed=+el('stSpeed').value||null; save(); renderStage(false); });
+el('btnWmImport').onclick=()=>{
+  const opts=[];
+  for(const r of state.races) for(const s of r.stages){
+    if(s.id===cur.stage.id || !s.waymarkers.length) continue;
+    opts.push({label:esc(r.name)+(r.stages.length>1?' · '+esc(s.name):'')+' ('+s.waymarkers.length+' ⚑)', race:r, stage:s});
+  }
+  if(!opts.length){ alert('Geen andere etappes met waymarkers gevonden.'); return; }
+  modal(
+    '<h2>Waymarkers kopiëren</h2>'+
+    '<label>Bron-etappe</label><select id="impSrc">'+opts.map((o,i)=>'<option value="'+i+'">'+o.label+'</option>').join('')+'</select>'+
+    '<p style="font-size:13px;color:var(--muted);margin-top:10px">Alle waymarkers van de bron worden toegevoegd aan deze etappe, op dezelfde kilometers. Controleer daarna of de km\'s kloppen als de parcoursen verschillen.</p>'+
+    '<div class="btns"><button class="ghost" onclick="closeModal()">Annuleer</button><button class="primary" id="impGo">Kopieer</button></div>',
+    m=>{
+      m.querySelector('#impGo').onclick=()=>{
+        const src=opts[+m.querySelector('#impSrc').value];
+        for(const w of src.stage.waymarkers) cur.stage.waymarkers.push({...w, id:uid()});
+        save(); closeModal(); renderStage(false);
+      };
+    });
+};
 el('btnExportGpx').onclick=()=>{ const st=cur.stage; if(!st.track.length){alert('Geen route om te exporteren.');return;} download(safeName(cur.race.name+'_'+st.name)+'.gpx', buildGpx(st), 'application/gpx+xml'); };
 el('btnStagePrint').onclick=roadbook;
 el('panelToggle').onclick=()=>el('sidePanel').classList.toggle('collapsed');
