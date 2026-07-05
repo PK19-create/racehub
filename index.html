@@ -98,6 +98,8 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 .lv-wm .d small{font-size:14px;color:var(--muted);font-weight:600}
 .lv-wm.first{border-color:var(--accent);background:#241b14}
 .lv-wm.first .d{color:var(--accent2)}
+#lvMapWrap{height:40%;min-height:180px;border-bottom:1px solid var(--line);flex-shrink:0}
+#lvMap{width:100%;height:100%;background:#0a0e13}
 .lv-profwrap{height:150px;background:var(--panel);border-top:1px solid var(--line);flex-shrink:0}
 #liveProfile{width:100%;height:100%;display:block}
 .lv-offroute{background:var(--red);color:#fff;text-align:center;font-weight:700;padding:6px;display:none}
@@ -208,11 +210,13 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
   <div class="lv-top">
     <div class="lv-name" id="lvName"></div>
     <div class="lv-status" id="lvStatus">–</div>
+    <button class="small" id="lvMapBtn" title="Kaart tonen/verbergen">🗺 Kaart</button>
     <button class="small" id="lvSim" title="Simulatie: rijd virtueel over het parcours">SIM</button>
     <button class="small danger" id="lvExit">✕ Stop</button>
   </div>
   <div class="lv-offroute" id="lvOff">NAAST PARCOURS</div>
   <div class="lv-main">
+    <div id="lvMapWrap" class="hidden"><div id="lvMap"></div></div>
     <div class="lv-nums">
       <div class="lv-num"><div class="v" id="lvKm">–</div><div class="l">km parcours</div></div>
       <div class="lv-num orange"><div class="v" id="lvToGo">–</div><div class="l">km te gaan</div></div>
@@ -791,6 +795,7 @@ function enterLive(){
   el('liveView').classList.remove('hidden');
   el('lvName').textContent=cur.race.name+(cur.race.stages.length>1?' · '+st.name:'');
   el('lvStatus').textContent='GPS zoeken…';
+  if(liveMap && !el('lvMapWrap').classList.contains('hidden')){ buildLiveMap(); setTimeout(()=>liveMap.invalidateSize(),80); }
   startGps();
   if(navigator.wakeLock) navigator.wakeLock.request('screen').then(w=>live.wake=w).catch(()=>{});
   updateLive(null);
@@ -857,6 +862,7 @@ function updateLive(m){
     list.appendChild(div);
   });
   drawLiveProfile(m);
+  updateLiveMap(m);
 }
 /* meeschuivend profiel: venster van 20 km, positie op 15% */
 function drawLiveProfile(m){
@@ -873,7 +879,6 @@ function drawLiveProfile(m){
   const b = a+winLen;
   const PL=36,PR=10,PT=18,PB=16;
   const px=mm=>PL+((mm-a)/(b-a))*(W-PL-PR);
-  // hoogtebereik binnen venster
   let minE=Infinity,maxE=-Infinity;
   for(let i=0;i<track.length;i++){
     if(dists[i]<a||dists[i]>b) continue;
@@ -885,18 +890,15 @@ function drawLiveProfile(m){
   if(maxE-minE<40){ const mid=(maxE+minE)/2; minE=mid-20; maxE=mid+20; }
   const padE=(maxE-minE)*0.12; minE-=padE; maxE+=padE;
   const py=e=>PT+(1-(e-minE)/(maxE-minE))*(H-PT-PB);
-  // km-gridlijnen elke 5 km (relatief)
   ctx.font='10px system-ui'; ctx.textAlign='center';
   const gStep=5000;
   for(let gm=Math.ceil((a-kz)/gStep)*gStep+kz; gm<=b; gm+=gStep){
     ctx.strokeStyle='#222c3a'; ctx.beginPath(); ctx.moveTo(px(gm),PT); ctx.lineTo(px(gm),H-PB); ctx.stroke();
     ctx.fillStyle='#8a99ab'; ctx.fillText(((gm-kz)/1000)+'', px(gm), H-4);
   }
-  // neutrale zone
   if(kz>a && kz<b){
     ctx.fillStyle='#ffffff12'; ctx.fillRect(px(a),PT,px(Math.min(kz,b))-px(a),H-PT-PB);
   }
-  // profiel binnen venster
   ctx.beginPath(); let started=false, lastE=minE;
   for(let i=0;i<track.length;i++){
     if(dists[i]<a){ lastE=track[i][2]??lastE; continue; }
@@ -912,7 +914,6 @@ function drawLiveProfile(m){
     grad.addColorStop(0,'#ff6b1a66'); grad.addColorStop(1,'#ff6b1a08');
     ctx.fillStyle=grad; ctx.fill();
   }
-  // waymarkers in venster
   for(const w of st.waymarkers){
     const wm=kz+w.km*1000; if(wm<a||wm>b) continue;
     const t=WM_TYPES[w.type]||WM_TYPES.info;
@@ -920,7 +921,6 @@ function drawLiveProfile(m){
     ctx.beginPath(); ctx.moveTo(px(wm),PT+8); ctx.lineTo(px(wm),H-PB); ctx.stroke();
     ctx.fillText(t.em, px(wm), PT+4);
   }
-  // huidige positie
   if(m!=null){
     const p=pointAtDist(track,dists,m);
     const yy=(p&&p[2]!=null)? py(p[2]) : H-PB;
@@ -930,6 +930,52 @@ function drawLiveProfile(m){
     ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(px(m),yy,5,0,7); ctx.stroke();
   }
 }
+/* live kaart */
+let liveMap=null, lvRoute=null, lvWms=null, lvPos=null;
+function toggleLiveMap(){
+  const w=el('lvMapWrap');
+  w.classList.toggle('hidden');
+  const open=!w.classList.contains('hidden');
+  el('lvMapBtn').classList.toggle('active-mode', open);
+  if(open){
+    if(typeof L==='undefined'){
+      w.innerHTML='<div style="display:flex;height:100%;align-items:center;justify-content:center;color:var(--muted)">Kaart niet beschikbaar (geen internet)</div>';
+      return;
+    }
+    if(!liveMap){
+      liveMap=L.map('lvMap',{zoomControl:false});
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(liveMap);
+      lvWms=L.layerGroup().addTo(liveMap);
+    }
+    buildLiveMap();
+    setTimeout(()=>{ liveMap.invalidateSize(); if(live.curM!=null) updateLiveMap(live.curM); },80);
+  }
+  drawLiveProfile(live.curM);
+}
+function buildLiveMap(){
+  if(!liveMap) return;
+  const st=cur.stage;
+  if(lvRoute){ liveMap.removeLayer(lvRoute); lvRoute=null; }
+  if(lvPos){ liveMap.removeLayer(lvPos); lvPos=null; }
+  lvWms.clearLayers();
+  if(!st.track.length) return;
+  lvRoute=L.polyline(st.track.map(p=>[p[0],p[1]]),{color:'#ff6b1a',weight:4,opacity:.9}).addTo(liveMap);
+  const dists=live.dists||cumDist(st.track), kz=st.kmZero||0;
+  for(const w of st.waymarkers){
+    const p=pointAtDist(st.track,dists,kz+w.km*1000); if(!p) continue;
+    const t=WM_TYPES[w.type]||WM_TYPES.info;
+    L.marker([p[0],p[1]],{icon:L.divIcon({className:'',html:'<div class="wm-divicon" style="width:24px;height:24px;background:'+t.color+'22;border-color:'+t.color+'">'+t.em+'</div>',iconSize:[24,24],iconAnchor:[12,12]}),interactive:false}).addTo(lvWms);
+  }
+  liveMap.fitBounds(lvRoute.getBounds(),{padding:[20,20]});
+}
+function updateLiveMap(m){
+  if(!liveMap || el('lvMapWrap').classList.contains('hidden') || m==null) return;
+  const p=pointAtDist(cur.stage.track,live.dists,m); if(!p) return;
+  if(!lvPos) lvPos=L.circleMarker([p[0],p[1]],{radius:8,color:'#fff',fillColor:'#3ba3ff',fillOpacity:1,weight:2}).addTo(liveMap);
+  else lvPos.setLatLng([p[0],p[1]]);
+  liveMap.setView([p[0],p[1]], Math.max(liveMap.getZoom()||14,13), {animate:false});
+}
+
 /* simulatie: virtueel over het parcours rijden */
 function startSim(){
   stopSim();
@@ -957,6 +1003,7 @@ function updateLiveFromM(m){
 }
 el('btnLive').onclick=enterLive;
 el('lvExit').onclick=exitLive;
+el('lvMapBtn').onclick=toggleLiveMap;
 el('lvSim').onclick=()=>{ if(live.simT){ stopSim(); el('lvStatus').textContent='SIM gestopt'; } else startSim(); };
 
 /* ================= Wire up ================= */
@@ -1026,7 +1073,7 @@ el('btnImportAll').onclick=()=>{
 
 window.addEventListener('resize', ()=>{
   if(cur.stage){ drawProfile(); if(map) map.invalidateSize(); }
-  if(!el('liveView').classList.contains('hidden')) drawLiveProfile(live.curM);
+  if(!el('liveView').classList.contains('hidden')){ drawLiveProfile(live.curM); if(liveMap) liveMap.invalidateSize(); }
 });
 window.showHub=showHub; window.closeModal=closeModal;
 
