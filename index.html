@@ -189,6 +189,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
       <div class="row">
         <button class="small" id="btnGpx">📂 GPX laden</button>
         <button class="small" id="btnNeutral" title="Neutralisatie-GPX vooraan plakken; km 0 schuift naar de officiële start">🏳 Neutralisatie</button>
+        <button class="small" id="btnAnalyze" title="Automatisch klimmen, afdalingen, bochten, spoorwegovergangen, rotondes en tunnels detecteren">🪄 Analyseer</button>
         <button class="small" id="btnDraw">✏️ Tekenen</button>
         <button class="small" id="btnUndoPt">↩ Punt terug</button>
         <button class="small danger" id="btnClearRoute">✕ Route wissen</button>
@@ -355,6 +356,153 @@ function sectorLatLngs(st, dists, kz, w){
   const pB=pointAtDist(st.track,dists,b); if(pB) out.push([pB[0],pB[1]]);
   return out;
 }
+/* ===== Route-analyse: automatische waymarker-suggesties ===== */
+/* klimmen (dir=+1) / afdalingen (dir=-1) uit geresampled hoogteprofiel (stap = 100 m) */
+function findRuns(ele, step, dir){
+  const out=[], n=ele.length;
+  const grad=i=>{ if(ele[i]==null||ele[i-1]==null) return 0; return dir*(ele[i]-ele[i-1])/step; };
+  let i=1;
+  while(i<n){
+    if(grad(i)>=0.03){
+      const start=i-1;
+      let j=i+1, gap=0, lastGood=i;
+      while(j<n){
+        if(grad(j)>=0.01){ gap=0; lastGood=j; }
+        else { gap+=step; if(gap>400) break; }
+        j++;
+      }
+      const end=lastGood, len=(end-start)*step;
+      if(ele[start]!=null && ele[end]!=null && len>0){
+        const gain=dir*(ele[end]-ele[start]);
+        const avg=gain/len*100;
+        if(dir>0 ? (len>=500&&gain>=30&&avg>=2.5) : (len>=1500&&gain>=60&&avg>=4)){
+          out.push(dir>0
+            ? {type:'klim', name:'', km:start*step, endKm:end*step, note:'auto: '+Math.round(gain)+' hm · '+avg.toFixed(1)+'%'}
+            : {type:'afdaling', name:'', km:start*step, endKm:end*step, note:'auto: '+avg.toFixed(1)+'% gem.'});
+        }
+      }
+      i=end+1;
+    } else i++;
+  }
+  return out;
+}
+/* scherpe bochten uit koersverandering (±35 m venster, ≥75°) */
+function detectBends(track, dists){
+  const brg=(a,b)=>{
+    const toR=Math.PI/180, dl=(b[1]-a[1])*toR;
+    return Math.atan2(Math.sin(dl)*Math.cos(b[0]*toR),
+      Math.cos(a[0]*toR)*Math.sin(b[0]*toR)-Math.sin(a[0]*toR)*Math.cos(b[0]*toR)*Math.cos(dl))*180/Math.PI;
+  };
+  const cands=[];
+  for(let i=1;i<track.length-1;i++){
+    let a=i-1; while(a>0 && dists[i]-dists[a]<35) a--;
+    let b=i+1; while(b<track.length-1 && dists[b]-dists[i]<35) b++;
+    if(dists[i]-dists[a]<15 || dists[b]-dists[i]<15) continue;
+    let d=brg(track[i],track[b])-brg(track[a],track[i]);
+    while(d>180)d-=360; while(d<-180)d+=360;
+    if(Math.abs(d)>=75) cands.push({m:dists[i], ang:d});
+  }
+  const merged=[];
+  cands.sort((x,y)=>x.m-y.m);
+  for(const c of cands){
+    const last=merged[merged.length-1];
+    if(last && c.m-last.m<120){ if(Math.abs(c.ang)>Math.abs(last.ang)){ last.m=c.m; last.ang=c.ang; } }
+    else merged.push({...c});
+  }
+  let res=merged.map(c=>({type:'bocht', name:'Scherpe bocht '+(c.ang>0?'rechts':'links'), km:c.m, endKm:null, note:'auto: '+Math.round(Math.abs(c.ang))+'°'}));
+  if(res.length>25){
+    res.sort((a,b)=>{const A=+a.note.match(/(\d+)°/)[1],B=+b.note.match(/(\d+)°/)[1];return B-A;});
+    res=res.slice(0,25).sort((a,b)=>a.km-b.km);
+  }
+  return res;
+}
+/* spoorwegovergangen, rotondes en tunnels via OpenStreetMap (Overpass) */
+async function osmSuggest(st, dists){
+  const pts=thin(st.track,300).map(p=>p[0].toFixed(4)+','+p[1].toFixed(4)).join(',');
+  const q='[out:json][timeout:25];(node(around:25,'+pts+')["railway"="level_crossing"];way(around:25,'+pts+')["junction"="roundabout"];way(around:25,'+pts+')["tunnel"]["highway"];);out center;';
+  const r=await fetch('https://overpass-api.de/api/interpreter',{
+    method:'POST', body:'data='+encodeURIComponent(q),
+    headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+  if(!r.ok) throw new Error('overpass '+r.status);
+  const j=await r.json();
+  const out=[];
+  for(const e of (j.elements||[])){
+    const lat=e.lat!=null? e.lat : (e.center&&e.center.lat), lng=e.lon!=null? e.lon : (e.center&&e.center.lon);
+    if(lat==null) continue;
+    const idx=nearestIdx(st.track,lat,lng);
+    if(hav(st.track[idx],[lat,lng])>60) continue;
+    const m=dists[idx], tags=e.tags||{};
+    if(tags.railway==='level_crossing') out.push({type:'spoor', name:'Spoorwegovergang', km:m, endKm:null, note:'auto (OSM)'});
+    else if(tags.junction==='roundabout') out.push({type:'rotonde', name:'Rotonde', km:m, endKm:null, note:'auto (OSM)'});
+    else if(tags.tunnel) out.push({type:'tunnel', name:'Tunnel', km:m, endKm:null, note:'auto (OSM)'});
+  }
+  out.sort((a,b)=>a.km-b.km);
+  const ded=[];
+  for(const s of out){
+    const l=ded[ded.length-1];
+    if(l && l.type===s.type && s.km-l.km<120) continue;
+    ded.push(s);
+  }
+  return ded;
+}
+async function analyzeRoute(){
+  const st=cur.stage;
+  if(!st.track.length){ alert('Laad eerst een route.'); return; }
+  const dists=cumDist(st.track), kz=st.kmZero||0, totM=dists[dists.length-1];
+  const btn=el('btnAnalyze'); btn.disabled=true; btn.textContent='🪄 analyseren…';
+  try{
+    let sugg=[];
+    if(st.track.some(p=>p[2]!=null)){
+      const step=100, n=Math.floor(totM/step);
+      const ele=[];
+      for(let i=0;i<=n;i++){ const p=pointAtDist(st.track,dists,i*step); ele.push(p?p[2]:null); }
+      sugg.push(...findRuns(ele,step,1), ...findRuns(ele,step,-1));
+    }
+    sugg.push(...detectBends(st.track,dists));
+    let osmError=false;
+    try{ sugg.push(...await osmSuggest(st,dists)); }catch(e){ osmError=true; }
+    reviewSuggestions(sugg, kz, osmError);
+  } finally {
+    btn.disabled=false; btn.textContent='🪄 Analyseer';
+  }
+}
+function reviewSuggestions(sugg, kz, osmError){
+  const st=cur.stage;
+  sugg=sugg.filter(s=>!st.waymarkers.some(w=>w.type===s.type && Math.abs((kz+w.km*1000)-s.km)<150));
+  sugg.sort((a,b)=>a.km-b.km);
+  const osmNote=osmError? '<p style="color:var(--muted);font-size:12px">OSM-data (spoor/rotondes/tunnels) niet bereikbaar; alleen profiel- en bocht-analyse.</p>':'';
+  if(!sugg.length){
+    modal('<h2>🪄 Analyse</h2>'+osmNote+'<p>Geen nieuwe suggesties gevonden.</p><div class="btns"><button class="primary" onclick="closeModal()">OK</button></div>');
+    return;
+  }
+  const rows=sugg.map((s,i)=>{
+    const t=WM_TYPES[s.type];
+    return '<label style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px">'+
+      '<input type="checkbox" checked data-i="'+i+'" style="width:auto">'+t.em+' <b>'+((s.km-kz)/1000).toFixed(1)+'</b> '+esc(s.name||t.label)+
+      (s.endKm!=null?' → '+((s.endKm-kz)/1000).toFixed(1):'')+' <span style="color:var(--muted)">'+esc(s.note)+'</span></label>';
+  }).join('');
+  modal('<h2>🪄 '+sugg.length+' suggesties</h2>'+osmNote+
+    '<div class="row" style="margin:0 0 6px"><button class="small ghost" id="sugAll">alles aan/uit</button></div>'+
+    '<div style="max-height:320px;overflow-y:auto">'+rows+'</div>'+
+    '<div class="btns"><button class="ghost" onclick="closeModal()">Annuleer</button><button class="primary" id="sugGo">Voeg aangevinkte toe</button></div>',
+    m=>{
+      m.querySelector('#sugAll').onclick=()=>{
+        const boxes=[...m.querySelectorAll('input[type=checkbox]')];
+        const on=boxes.some(b=>!b.checked);
+        boxes.forEach(b=>b.checked=on);
+      };
+      m.querySelector('#sugGo').onclick=()=>{
+        m.querySelectorAll('input[type=checkbox]').forEach(cb=>{
+          if(!cb.checked) return;
+          const s=sugg[+cb.dataset.i];
+          st.waymarkers.push({id:uid(), type:s.type, name:s.name, km:+((s.km-kz)/1000).toFixed(2),
+            endKm: s.endKm!=null? +((s.endKm-kz)/1000).toFixed(2) : null, note:s.note});
+        });
+        save(); closeModal(); renderStage(false);
+      };
+    });
+}
+
 /* vast nummer per waymarker (volgorde op km) */
 function wmNumber(st){
   const s=[...st.waymarkers].sort((a,b)=>a.km-b.km);
@@ -1355,6 +1503,7 @@ el('neutralFile').addEventListener('change', e=>{
   rd.readAsText(f);
   e.target.value='';
 });
+el('btnAnalyze').onclick=analyzeRoute;
 el('btnDraw').onclick=()=>setMode('draw');
 el('btnUndoPt').onclick=()=>{ const st=cur.stage; if(st.track.length){ st.track.pop(); save(); renderStage(false);} };
 el('btnClearRoute').onclick=()=>{ if(confirm('Hele route wissen? Waymarkers blijven staan (op km).')){ cur.stage.track=[]; cur.stage.kmZero=0; save(); renderStage(false);} };
