@@ -98,8 +98,17 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 .lv-wm .d small{font-size:14px;color:var(--muted);font-weight:600}
 .lv-wm.first{border-color:var(--accent);background:#241b14}
 .lv-wm.first .d{color:var(--accent2)}
-#lvMapWrap{height:40%;min-height:180px;border-bottom:1px solid var(--line);flex-shrink:0}
+#lvMapWrap{height:40%;min-height:180px;border-bottom:1px solid var(--line);flex-shrink:0;position:relative}
 #lvMap{width:100%;height:100%;background:#0a0e13}
+#lvZooms{position:absolute;left:8px;top:8px;z-index:800;display:flex;flex-direction:column;gap:4px}
+#lvZooms button{padding:5px 9px;font-size:12px;background:#000c;border:1px solid var(--line);border-radius:8px;color:var(--text)}
+#lvZooms button.active-mode{background:var(--accent);border-color:var(--accent)}
+#lvAlert{position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:1600;display:none;align-items:center;gap:14px;background:#0c1117f0;border:2px solid var(--accent);border-radius:16px;padding:10px 22px;box-shadow:0 4px 24px #000c;white-space:nowrap}
+#lvAlert .ic{font-size:38px}
+#lvAlert .d{font-size:42px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+#lvAlert .n{font-size:15px;color:var(--muted);margin-top:2px}
+.wm-nr{position:absolute;top:-7px;right:-7px;background:#0c1117;border:1px solid #ffffff66;border-radius:50%;min-width:16px;height:16px;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;color:#fff}
+.nr-chip{background:var(--panel2);border:1px solid var(--line);border-radius:6px;min-width:22px;height:22px;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;color:var(--muted);flex-shrink:0}
 .lv-profwrap{height:150px;background:var(--panel);border-top:1px solid var(--line);flex-shrink:0}
 #liveProfile{width:100%;height:100%;display:block}
 .lv-offroute{background:var(--red);color:#fff;text-align:center;font-weight:700;padding:6px;display:none}
@@ -215,8 +224,9 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
     <button class="small danger" id="lvExit">✕ Stop</button>
   </div>
   <div class="lv-offroute" id="lvOff">NAAST PARCOURS</div>
+  <div id="lvAlert"><div class="ic"></div><div><div class="d"></div><div class="n"></div></div></div>
   <div class="lv-main">
-    <div id="lvMapWrap" class="hidden"><div id="lvMap"></div></div>
+    <div id="lvMapWrap" class="hidden"><div id="lvMap"></div><div id="lvZooms"></div></div>
     <div class="lv-nums">
       <div class="lv-num"><div class="v" id="lvKm">–</div><div class="l">km parcours</div></div>
       <div class="lv-num orange"><div class="v" id="lvToGo">–</div><div class="l">km te gaan</div></div>
@@ -284,6 +294,34 @@ function totalAscent(track){
   }
   return Math.round(up);
 }
+/* vast nummer per waymarker (volgorde op km) */
+function wmNumber(st){
+  const s=[...st.waymarkers].sort((a,b)=>a.km-b.km);
+  const m={}; s.forEach((w,i)=>m[w.id]=i+1); return m;
+}
+/* kleur op stijgingspercentage */
+function gradColor(g){
+  if(g==null) return '#5a6470';
+  const p=g*100;
+  if(p<-2) return '#3b82c4';
+  if(p<2)  return '#3f9d5a';
+  if(p<4)  return '#d8c93a';
+  if(p<7)  return '#ff8c42';
+  if(p<10) return '#e74c3c';
+  return '#8e2020';
+}
+/* gesmoothde gradient per segment (±100 m venster) */
+function smoothGrads(track,dists){
+  const n=track.length, g=new Array(Math.max(0,n-1)).fill(null);
+  for(let i=0;i<n-1;i++){
+    let a=i,b=i+1;
+    while(a>0 && dists[i]-dists[a]<100) a--;
+    while(b<n-1 && dists[b]-dists[i+1]<100) b++;
+    const dd=dists[b]-dists[a];
+    if(dd>10 && track[a][2]!=null && track[b][2]!=null) g[i]=(track[b][2]-track[a][2])/dd;
+  }
+  return g;
+}
 /* nearest track index to latlng */
 function nearestIdx(track, lat, lng){
   let best=0, bd=Infinity;
@@ -337,12 +375,14 @@ function buildGpx(stage){
     const p0=pointAtDist(stage.track,dists,kz);
     if(p0) x+='<wpt lat="'+p0[0]+'" lon="'+p0[1]+'">'+(p0[2]!=null?'<ele>'+p0[2]+'</ele>':'')+'<name>KM 0 - START</name><sym>Start</sym></wpt>\n';
   }
-  for(const w of [...stage.waymarkers].sort((a,b)=>a.km-b.km)){
+  const wsorted=[...stage.waymarkers].sort((a,b)=>a.km-b.km);
+  for(let wi=0; wi<wsorted.length; wi++){
+    const w=wsorted[wi];
     const p=pointAtDist(stage.track,dists,kz+w.km*1000);
     if(!p) continue;
     const t=WM_TYPES[w.type]||WM_TYPES.info;
     x+='<wpt lat="'+p[0]+'" lon="'+p[1]+'">'+(p[2]!=null?'<ele>'+p[2]+'</ele>':'')+
-       '<name>'+esc(t.label.toUpperCase()+' '+(w.name||'')+' @'+w.km.toFixed(1)+'km')+'</name>'+
+       '<name>'+esc((wi+1)+' '+t.label.toUpperCase()+' '+(w.name||'')+' @'+w.km.toFixed(1)+'km')+'</name>'+
        (w.note?'<desc>'+esc(w.note)+'</desc>':'')+'<sym>'+esc(t.label)+'</sym></wpt>\n';
   }
   x+='<trk><name>'+esc(stage.name)+'</name><trkseg>\n';
@@ -547,6 +587,7 @@ function renderStage(fit){
   const kz = st.kmZero||0;
   const totKm = (dists[dists.length-1]-kz)/1000;
   const sorted=[...st.waymarkers].sort((a,b)=>a.km-b.km);
+  const nrs=wmNumber(st);
 
   // stats
   const hasEle = st.track.length && st.track.some(p=>p[2]!=null);
@@ -587,9 +628,9 @@ function renderStage(fit){
     const p=pointAtDist(st.track,dists,kz+w.km*1000); if(!p) continue;
     const t=WM_TYPES[w.type]||WM_TYPES.info;
     const mk=L.marker([p[0],p[1]],{icon:L.divIcon({
-      className:'', html:'<div class="wm-divicon" style="width:26px;height:26px;background:'+t.color+'22;border-color:'+t.color+'">'+t.em+'</div>',
+      className:'', html:'<div style="position:relative;width:26px;height:26px"><div class="wm-divicon" style="width:26px;height:26px;background:'+t.color+'22;border-color:'+t.color+'">'+t.em+'</div><div class="wm-nr">'+nrs[w.id]+'</div></div>',
       iconSize:[26,26], iconAnchor:[13,13]})});
-    mk.bindPopup('<b>'+t.em+' '+esc(w.name||t.label)+'</b><br>km '+w.km.toFixed(1)+(w.note?'<br>'+esc(w.note):''));
+    mk.bindPopup('<b>#'+nrs[w.id]+' '+t.em+' '+esc(w.name||t.label)+'</b><br>km '+w.km.toFixed(1)+(w.note?'<br>'+esc(w.note):''));
     mk.on('dblclick',()=>wmModal(w,null));
     mk.addTo(wmLayer);
   }
@@ -601,7 +642,7 @@ function renderStage(fit){
   for(const w of sorted){
     const t=WM_TYPES[w.type]||WM_TYPES.info;
     const div=document.createElement('div'); div.className='wm-item';
-    div.innerHTML='<div class="ic" style="background:'+t.color+'22;border:1px solid '+t.color+'">'+t.em+'</div>'+
+    div.innerHTML='<div class="nr-chip">'+nrs[w.id]+'</div><div class="ic" style="background:'+t.color+'22;border:1px solid '+t.color+'">'+t.em+'</div>'+
       '<div class="nm"><div class="t">'+esc(w.name||t.label)+'</div><div class="s">'+t.label+(w.note?' · '+esc(w.note):'')+'</div></div>'+
       '<div class="km">'+w.km.toFixed(1)+'</div>';
     const del=document.createElement('button'); del.className='del'; del.textContent='✕';
@@ -694,17 +735,22 @@ function drawProfile(){
     ctx.textAlign='center'; ctx.fillStyle='#8a99ab'; ctx.fillText(((m-kz)/1000)+'', px(m), H-6);
   }
 
-  // area + line
-  ctx.beginPath(); ctx.moveTo(px(0), py(track[0][2]??minE));
+  // vlakken gekleurd op stijgingspercentage
+  const grads=smoothGrads(track,dists);
   let lastE=track[0][2]??minE;
-  for(let i=1;i<track.length;i++){ const e=track[i][2]??lastE; lastE=e; ctx.lineTo(px(dists[i]), py(e)); }
-  ctx.lineTo(px(totM),H-PADB); ctx.lineTo(px(0),H-PADB); ctx.closePath();
-  const grad=ctx.createLinearGradient(0,PADT,0,H-PADB);
-  grad.addColorStop(0,'#ff6b1a88'); grad.addColorStop(1,'#ff6b1a11');
-  ctx.fillStyle=grad; ctx.fill();
+  for(let i=1;i<track.length;i++){
+    const e=track[i][2]??lastE;
+    const x1=px(dists[i-1]), x2=px(dists[i]);
+    if(x2>x1){
+      ctx.fillStyle=gradColor(grads[i-1])+'d9';
+      ctx.beginPath(); ctx.moveTo(x1,py(lastE)); ctx.lineTo(x2,py(e));
+      ctx.lineTo(x2,H-PADB); ctx.lineTo(x1,H-PADB); ctx.closePath(); ctx.fill();
+    }
+    lastE=e;
+  }
   ctx.beginPath(); lastE=track[0][2]??minE; ctx.moveTo(px(0),py(lastE));
   for(let i=1;i<track.length;i++){ const e=track[i][2]??lastE; lastE=e; ctx.lineTo(px(dists[i]),py(e)); }
-  ctx.strokeStyle='#ff8c42'; ctx.lineWidth=1.6; ctx.stroke();
+  ctx.strokeStyle='#ffffff55'; ctx.lineWidth=1.2; ctx.stroke();
 
   // neutralisatie-zone arceren + km 0 lijn
   if(kz>0){
@@ -771,27 +817,27 @@ function roadbook(){
   const dists=st.track.length?cumDist(st.track):[0];
   const kz=st.kmZero||0;
   const totKm=(dists[dists.length-1]-kz)/1000;
-  const rows=[...st.waymarkers].sort((a,b)=>a.km-b.km).map(w=>{
+  const rows=[...st.waymarkers].sort((a,b)=>a.km-b.km).map((w,i)=>{
     const t=WM_TYPES[w.type]||WM_TYPES.info;
-    return '<tr><td>'+w.km.toFixed(1)+'</td><td>'+(totKm-w.km).toFixed(1)+'</td><td>'+t.em+' '+t.label+'</td><td>'+esc(w.name||'')+'</td><td>'+esc(w.note||'')+'</td></tr>';
+    return '<tr><td>'+(i+1)+'</td><td>'+w.km.toFixed(1)+'</td><td>'+(totKm-w.km).toFixed(1)+'</td><td>'+t.em+' '+t.label+'</td><td>'+esc(w.name||'')+'</td><td>'+esc(w.note||'')+'</td></tr>';
   }).join('');
   const win=window.open('','_blank');
   win.document.write('<html><head><title>Roadbook – '+esc(st.name)+'</title><style>body{font-family:system-ui;padding:24px}h1{font-size:20px}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:13px}th{background:#f2f2f2}</style></head><body>'+
     '<h1>'+esc(cur.race.name)+(cur.race.stages.length>1?' – '+esc(st.name):'')+'</h1>'+
     '<p>'+totKm.toFixed(1)+' km'+(kz>0?' · neutralisatie '+(kz/1000).toFixed(1)+' km':'')+' · '+(st.track.some(p=>p[2]!=null)? totalAscent(st.track)+' hm · ':'')+st.waymarkers.length+' waymarkers</p>'+
-    '<table><tr><th>km</th><th>nog te gaan</th><th>type</th><th>naam</th><th>notitie</th></tr>'+rows+'</table>'+
+    '<table><tr><th>#</th><th>km</th><th>nog te gaan</th><th>type</th><th>naam</th><th>notitie</th></tr>'+rows+'</table>'+
     '<script>window.print()<\/script></body></html>');
   win.document.close();
 }
 
 /* ================= LIVE view ================= */
-const live={watch:null,lastIdx:0,simT:null,simM:0,speed:0,lastFix:null,wake:null,dists:null,kz:0,totM:0,curM:null};
+const live={watch:null,lastIdx:0,simT:null,simM:0,speed:0,lastFix:null,wake:null,dists:null,kz:0,totM:0,curM:null,zoomKm:null,follow:true};
 
 function enterLive(){
   const st=cur.stage;
   if(!st || !st.track.length){ alert('Laad eerst een route voor deze etappe.'); return; }
   live.dists=cumDist(st.track); live.kz=st.kmZero||0; live.totM=live.dists[live.dists.length-1];
-  live.lastIdx=0; live.speed=0; live.lastFix=null; live.curM=null;
+  live.lastIdx=0; live.speed=0; live.lastFix=null; live.curM=null; live.zoomKm=null; live.follow=true;
   el('liveView').classList.remove('hidden');
   el('lvName').textContent=cur.race.name+(cur.race.stages.length>1?' · '+st.name:'');
   el('lvStatus').textContent='GPS zoeken…';
@@ -843,24 +889,35 @@ function updateLive(m){
   if(m==null){
     el('lvKm').textContent='–'; el('lvToGo').textContent='–'; el('lvSpeed').textContent='–';
     el('lvNext').innerHTML='<div class="empty-note">Wachten op positie… (of start SIM)</div>';
+    el('lvAlert').style.display='none';
     drawLiveProfile(null); return;
   }
   const rel=(m-live.kz)/1000;
   el('lvKm').textContent=rel.toFixed(1);
   el('lvToGo').textContent=Math.max(0,(live.totM-m)/1000).toFixed(1);
   el('lvSpeed').textContent=String(Math.round(live.speed));
+  const nrs=wmNumber(st);
   const upcoming=[...st.waymarkers].map(w=>({...w, absM:live.kz+w.km*1000}))
-    .filter(w=>w.absM>=m-100).sort((a,b)=>a.absM-b.absM).slice(0,6);
+    .filter(w=>w.absM>=m-100).sort((a,b)=>a.absM-b.absM).slice(0,8);
   const list=el('lvNext'); list.innerHTML='';
   if(!upcoming.length) list.innerHTML='<div class="empty-note">Geen waymarkers meer tot de finish.</div>';
   upcoming.forEach((w,i)=>{
     const t=WM_TYPES[w.type]||WM_TYPES.info;
     const div=document.createElement('div'); div.className='lv-wm'+(i===0?' first':'');
-    div.innerHTML='<div class="ic" style="background:'+t.color+'22;border:2px solid '+t.color+'">'+t.em+'</div>'+
+    div.innerHTML='<div class="nr-chip">'+nrs[w.id]+'</div><div class="ic" style="background:'+t.color+'22;border:2px solid '+t.color+'">'+t.em+'</div>'+
       '<div class="inf"><div class="t">'+esc(w.name||t.label)+'</div><div class="s">'+t.label+' · km '+w.km.toFixed(1)+(w.note?' · '+esc(w.note):'')+'</div></div>'+
       '<div class="d">'+Math.max(0,(w.absM-m)/1000).toFixed(1)+' <small>km</small></div>';
     list.appendChild(div);
   });
+  // aankondiging: eerstvolgende waymarker binnen 1,2 km
+  const al=el('lvAlert');
+  if(upcoming.length && (upcoming[0].absM-m)<=1200){
+    const w0=upcoming[0], t0=WM_TYPES[w0.type]||WM_TYPES.info, d0=Math.max(0,w0.absM-m);
+    al.style.display='flex'; al.style.borderColor=t0.color;
+    al.querySelector('.ic').textContent=t0.em;
+    al.querySelector('.d').textContent= d0<1000? (Math.round(d0/10)*10)+' m' : (d0/1000).toFixed(1)+' km';
+    al.querySelector('.n').textContent='#'+nrs[w0.id]+' · '+(w0.name||t0.label)+(w0.note?' · '+w0.note:'');
+  } else al.style.display='none';
   drawLiveProfile(m);
   updateLiveMap(m);
 }
@@ -899,7 +956,21 @@ function drawLiveProfile(m){
   if(kz>a && kz<b){
     ctx.fillStyle='#ffffff12'; ctx.fillRect(px(a),PT,px(Math.min(kz,b))-px(a),H-PT-PB);
   }
-  ctx.beginPath(); let started=false, lastE=minE;
+  // vlakken gekleurd op stijgingspercentage
+  const grads=smoothGrads(track,dists);
+  let lastE=null;
+  for(let i=1;i<track.length;i++){
+    if(dists[i]<a){ lastE=track[i][2]??lastE; continue; }
+    if(dists[i-1]>b) break;
+    const e1=track[i-1][2]??lastE??minE, e2=track[i][2]??e1;
+    lastE=e2;
+    const x1=px(Math.max(dists[i-1],a)), x2=px(Math.min(dists[i],b));
+    if(x2<=x1) continue;
+    ctx.fillStyle=gradColor(grads[i-1])+'d9';
+    ctx.beginPath(); ctx.moveTo(x1,py(e1)); ctx.lineTo(x2,py(e2));
+    ctx.lineTo(x2,H-PB); ctx.lineTo(x1,H-PB); ctx.closePath(); ctx.fill();
+  }
+  ctx.beginPath(); let started=false; lastE=minE;
   for(let i=0;i<track.length;i++){
     if(dists[i]<a){ lastE=track[i][2]??lastE; continue; }
     if(dists[i]>b) break;
@@ -907,13 +978,7 @@ function drawLiveProfile(m){
     if(!started){ ctx.moveTo(px(dists[i]),py(e)); started=true; }
     else ctx.lineTo(px(dists[i]),py(e));
   }
-  if(started){
-    ctx.strokeStyle='#ff8c42'; ctx.lineWidth=2.2; ctx.stroke();
-    ctx.lineTo(px(b),H-PB); ctx.lineTo(px(a),H-PB); ctx.closePath();
-    const grad=ctx.createLinearGradient(0,PT,0,H-PB);
-    grad.addColorStop(0,'#ff6b1a66'); grad.addColorStop(1,'#ff6b1a08');
-    ctx.fillStyle=grad; ctx.fill();
-  }
+  if(started){ ctx.strokeStyle='#ffffff55'; ctx.lineWidth=1.4; ctx.stroke(); }
   for(const w of st.waymarkers){
     const wm=kz+w.km*1000; if(wm<a||wm>b) continue;
     const t=WM_TYPES[w.type]||WM_TYPES.info;
@@ -946,6 +1011,12 @@ function toggleLiveMap(){
       liveMap=L.map('lvMap',{zoomControl:false});
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(liveMap);
       lvWms=L.layerGroup().addTo(liveMap);
+      [1,2,5,10,25,'Full'].forEach(k=>{
+        const b=document.createElement('button');
+        b.textContent = k==='Full'? 'Alles' : k+' km';
+        b.onclick=()=>zoomPreset(k,b);
+        el('lvZooms').appendChild(b);
+      });
     }
     buildLiveMap();
     setTimeout(()=>{ liveMap.invalidateSize(); if(live.curM!=null) updateLiveMap(live.curM); },80);
@@ -961,10 +1032,11 @@ function buildLiveMap(){
   if(!st.track.length) return;
   lvRoute=L.polyline(st.track.map(p=>[p[0],p[1]]),{color:'#ff6b1a',weight:4,opacity:.9}).addTo(liveMap);
   const dists=live.dists||cumDist(st.track), kz=st.kmZero||0;
+  const nrs=wmNumber(st);
   for(const w of st.waymarkers){
     const p=pointAtDist(st.track,dists,kz+w.km*1000); if(!p) continue;
     const t=WM_TYPES[w.type]||WM_TYPES.info;
-    L.marker([p[0],p[1]],{icon:L.divIcon({className:'',html:'<div class="wm-divicon" style="width:24px;height:24px;background:'+t.color+'22;border-color:'+t.color+'">'+t.em+'</div>',iconSize:[24,24],iconAnchor:[12,12]}),interactive:false}).addTo(lvWms);
+    L.marker([p[0],p[1]],{icon:L.divIcon({className:'',html:'<div style="position:relative;width:24px;height:24px"><div class="wm-divicon" style="width:24px;height:24px;background:'+t.color+'22;border-color:'+t.color+'">'+t.em+'</div><div class="wm-nr">'+nrs[w.id]+'</div></div>',iconSize:[24,24],iconAnchor:[12,12]}),interactive:false}).addTo(lvWms);
   }
   liveMap.fitBounds(lvRoute.getBounds(),{padding:[20,20]});
 }
@@ -973,7 +1045,28 @@ function updateLiveMap(m){
   const p=pointAtDist(cur.stage.track,live.dists,m); if(!p) return;
   if(!lvPos) lvPos=L.circleMarker([p[0],p[1]],{radius:8,color:'#fff',fillColor:'#3ba3ff',fillOpacity:1,weight:2}).addTo(liveMap);
   else lvPos.setLatLng([p[0],p[1]]);
-  liveMap.setView([p[0],p[1]], Math.max(liveMap.getZoom()||14,13), {animate:false});
+  if(!live.follow) return; // 'Alles' gekozen: overzicht laten staan
+  if(live.zoomKm) applyZoomKm(p);
+  else liveMap.setView([p[0],p[1]], Math.max(liveMap.getZoom()||14,13), {animate:false});
+}
+/* zoom-presets: kaartbreedte ≈ gekozen km, gecentreerd op positie */
+function zoomPreset(k,btn){
+  if(!liveMap) return;
+  el('lvZooms').querySelectorAll('button').forEach(x=>x.classList.toggle('active-mode',x===btn));
+  if(k==='Full'){
+    live.zoomKm=null; live.follow=false;
+    if(lvRoute) liveMap.fitBounds(lvRoute.getBounds(),{padding:[20,20]});
+    return;
+  }
+  live.zoomKm=k; live.follow=true;
+  const p = live.curM!=null? pointAtDist(cur.stage.track,live.dists,live.curM) : cur.stage.track[0];
+  if(p) applyZoomKm(p);
+}
+function applyZoomKm(p){
+  const km=live.zoomKm; if(!km||!p) return;
+  const dLat=(km*1000/2)/111320;
+  const dLng=(km*1000/2)/(111320*Math.cos(p[0]*Math.PI/180));
+  liveMap.fitBounds([[p[0]-dLat,p[1]-dLng],[p[0]+dLat,p[1]+dLng]],{animate:false});
 }
 
 /* simulatie: virtueel over het parcours rijden */
