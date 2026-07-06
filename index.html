@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v20</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v21</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
   <button class="small ghost" id="btnImportAll" title="Backup terugzetten">⬆ Herstel</button>
@@ -553,9 +553,9 @@ function gradColor(g){
   if(p<10) return '#e74c3c';
   return '#8e2020';
 }
-/* klimkleur per percentage (Tour-stijl): groen <4, blauw 4-6, rood 6-9, zwart ≥9 */
+/* klimkleur per percentage: groen <4, blauw 4-6, paars 6-9, rood ≥9 */
 function climbColor(pct){
-  return pct<4? '#43A047' : pct<6? '#1E88E5' : pct<9? '#E53935' : '#1B1B1B';
+  return pct<4? '#43A047' : pct<6? '#1E88E5' : pct<9? '#8E24AA' : '#E53935';
 }
 /* klimmen inkleuren per 100 m-blok binnen [clipA,clipB] */
 function drawClimbColumns(ctx, st, dists, kz, px, py, yBottom, clipA, clipB){
@@ -1394,8 +1394,7 @@ function tdfProfile(){
     const p1=pointAtDist(track,dists,a), p2=pointAtDist(track,dists,b);
     let col='#43A047';
     if(p1&&p2&&p1[2]!=null&&p2[2]!=null){
-      const pct=(p2[2]-p1[2])/(b-a)*100;
-      col = pct>=6? '#E53935' : pct>=4? '#1E88E5' : '#43A047';
+      col=climbColor((p2[2]-p1[2])/(b-a)*100);
     }
     ctx.save(); areaPath(); ctx.clip();
     ctx.fillStyle=col; ctx.fillRect(px(a),0,px(b)-px(a),H);
