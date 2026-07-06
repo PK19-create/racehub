@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v9</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v10</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
   <button class="small ghost" id="btnImportAll" title="Backup terugzetten">⬆ Herstel</button>
@@ -504,21 +504,20 @@ function reviewSuggestions(sugg, kz, osmError){
     });
 }
 
-/* icoon per waymarker; bochten krijgen een gebogen pijl in de vorm en richting van de bocht */
+/* icoon per waymarker; klim = berg met vlag, bocht = blauw verkeersbord met haakse pijl (L/R) */
 function wmFace(w,t,pxSize){
-  if(w.type==='bocht' && w.deg){
-    const deg=Math.min(170,Math.abs(w.deg));
-    const s=(w.dir==='L'?-1:1);
-    const rad=deg*Math.PI/180;
-    const dxn=Math.sin(rad)*s, dyn=-Math.cos(rad);   // richting ná de bocht
-    const ex=12+7*dxn, ey=9+7*dyn;                    // einde van de boog
-    const tx=ex+4.5*dxn, ty=ey+4.5*dyn;               // punt van de pijl
-    const pxn=-dyn, pyn=dxn;                          // loodrecht op richting
-    const b1x=ex+3.2*pxn, b1y=ey+3.2*pyn;
-    const b2x=ex-3.2*pxn, b2y=ey-3.2*pyn;
-    const d='M12 21 L12 13 Q12 9 '+ex.toFixed(1)+' '+ey.toFixed(1);
-    const tri=tx.toFixed(1)+','+ty.toFixed(1)+' '+b1x.toFixed(1)+','+b1y.toFixed(1)+' '+b2x.toFixed(1)+','+b2y.toFixed(1);
-    return {html:'<svg viewBox="0 0 24 24" width="'+pxSize+'" height="'+pxSize+'" style="display:block"><path d="'+d+'" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/><polygon points="'+tri+'" fill="#fff"/></svg>', bg:t.color};
+  if(w.type==='klim'){
+    return {html:'<svg viewBox="0 0 24 24" width="'+pxSize+'" height="'+pxSize+'" style="display:block">'+
+      '<path d="M13 3 L13 9" stroke="#fff" stroke-width="1.6"/>'+
+      '<path d="M13 3 L18.5 4.6 L13 6.4 Z" fill="#ff5252"/>'+
+      '<path d="M5.5 21 L13 8.5 L20.5 21 Z" fill="#fff"/>'+
+      '<path d="M1.5 21 L6.8 12.5 L11 21 Z" fill="#b9c6d4"/></svg>', bg:t.color+'22'};
+  }
+  if(w.type==='bocht'){
+    const arrow='<path d="M9.4 20.5 L9.4 12 Q9.4 9.6 11.8 9.6 L13 9.6" fill="none" stroke="#fff" stroke-width="3.8"/>'+
+      '<path d="M12.6 5.2 L20 9.6 L12.6 14 Z" fill="#fff"/>';
+    const g=(w.dir==='L')? '<g transform="scale(-1,1) translate(-24,0)">'+arrow+'</g>' : arrow;
+    return {html:'<svg viewBox="0 0 24 24" width="'+pxSize+'" height="'+pxSize+'" style="display:block">'+g+'</svg>', bg:t.color};
   }
   return {html:t.em, bg:t.color+'22'};
 }
@@ -918,7 +917,10 @@ function wmModal(w, presetKm){
   const minKm=-kz/1000;
   const isNew=!w;
   let selType = w? w.type : (recentTypes()[0]||'klim');
-  const btn=k=>'<button class="type-btn'+(k===selType?' sel':'')+'" data-t="'+k+'"><span class="em">'+WM_TYPES[k].em+'</span>'+WM_TYPES[k].label+'</button>';
+  const btn=k=>{
+    const f=wmFace({type:k},WM_TYPES[k],14);
+    return '<button class="type-btn'+(k===selType?' sel':'')+'" data-t="'+k+'"><span class="em" style="display:flex;width:24px;height:24px;border-radius:50%;align-items:center;justify-content:center;background:'+f.bg+'">'+f.html+'</span>'+WM_TYPES[k].label+'</button>';
+  };
   let groupsHtml='';
   const rec=recentTypes().filter(k=>WM_TYPES[k]);
   if(rec.length) groupsHtml+='<div class="tg-head">Recent</div><div class="type-grid">'+rec.map(btn).join('')+'</div>';
