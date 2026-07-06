@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v15</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v16</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
   <button class="small ghost" id="btnImportAll" title="Backup terugzetten">⬆ Herstel</button>
@@ -217,6 +217,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
         <button class="primary" id="btnLive" style="flex:1;font-size:16px">▶ LIVE</button>
         <button class="small ghost" id="btnExportGpx">⬇ GPX head-unit</button>
         <button class="small ghost" id="btnStagePrint">🖨 Roadbook</button>
+        <button class="small ghost" id="btnTdf">🏔 Profiel</button>
       </div>
     </div>
   </div>
@@ -1342,6 +1343,112 @@ function roadbook(){
   win.document.close();
 }
 
+/* ================= Profielposter (Tour-stijl) ================= */
+function tdfProfile(){
+  const st=cur.stage;
+  if(!st||!st.track.length){ alert('Geen route geladen.'); return; }
+  if(!st.track.some(p=>p[2]!=null)){ alert('Geen hoogtedata in deze route.'); return; }
+  const track=st.track, dists=cumDist(track), kz=st.kmZero||0, totM=dists[dists.length-1];
+  const W=1500,H=760, ML=55,MR=55,MT=290,MB=70;
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx=cv.getContext('2d');
+  ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
+  let minE=Infinity,maxE=-Infinity;
+  for(const p of track){ if(p[2]==null) continue; minE=Math.min(minE,p[2]); maxE=Math.max(maxE,p[2]); }
+  if(maxE-minE<100){ const mid=(minE+maxE)/2; minE=mid-50; maxE=mid+50; }
+  const eSpan=maxE-minE; minE-=eSpan*0.06;
+  const px=m=>ML+(m/totM)*(W-ML-MR);
+  const py=e=>MT+(1-(e-minE)/(maxE-minE))*(H-MT-MB);
+  const yBase=H-MB;
+  const areaPath=()=>{
+    ctx.beginPath(); ctx.moveTo(px(0),yBase);
+    let le=track[0][2]??minE;
+    for(let i=0;i<track.length;i++){ const e=track[i][2]??le; le=e; ctx.lineTo(px(dists[i]),py(e)); }
+    ctx.lineTo(px(totM),yBase); ctx.closePath();
+  };
+  areaPath(); ctx.fillStyle='#FFE01A'; ctx.fill();
+  for(const w of st.waymarkers){
+    if(w.type!=='klim'||w.endKm==null||w.endKm<=w.km) continue;
+    const a=Math.max(0,kz+w.km*1000), b=Math.min(totM,kz+w.endKm*1000);
+    if(b<=a) continue;
+    const p1=pointAtDist(track,dists,a), p2=pointAtDist(track,dists,b);
+    let col='#43A047';
+    if(p1&&p2&&p1[2]!=null&&p2[2]!=null){
+      const pct=(p2[2]-p1[2])/(b-a)*100;
+      col = pct>=6? '#E53935' : pct>=4? '#1E88E5' : '#43A047';
+    }
+    ctx.save(); areaPath(); ctx.clip();
+    ctx.fillStyle=col; ctx.fillRect(px(a),0,px(b)-px(a),H);
+    ctx.restore();
+  }
+  ctx.save(); areaPath(); ctx.clip();
+  ctx.strokeStyle='#00000022'; ctx.lineWidth=1;
+  const eStep=niceStep(eSpan/8);
+  for(let e=Math.ceil(minE/eStep)*eStep;e<maxE;e+=eStep){ ctx.beginPath(); ctx.moveTo(0,py(e)); ctx.lineTo(W,py(e)); ctx.stroke(); }
+  ctx.restore();
+  ctx.beginPath(); let le2=track[0][2]??minE; ctx.moveTo(px(0),py(le2));
+  for(let i=1;i<track.length;i++){ const e=track[i][2]??le2; le2=e; ctx.lineTo(px(dists[i]),py(e)); }
+  ctx.strokeStyle='#111'; ctx.lineWidth=2.5; ctx.stroke();
+  const nrs=wmNumber(st);
+  const callTypes=['klim','sprint','feed','afval'];
+  const items=[];
+  items.push({m:kz, label:Math.round((pointAtDist(track,dists,kz)||[0,0,0])[2]||0)+' m START', type:'start'});
+  for(const w of [...st.waymarkers].sort((x,y)=>x.km-y.km)){
+    if(!callTypes.includes(w.type)) continue;
+    const m=kz+w.km*1000; if(m<0||m>totM) continue;
+    const p=pointAtDist(track,dists,m);
+    let lbl=(p&&p[2]!=null? Math.round(p[2])+' m ':'')+(w.name||WM_TYPES[w.type].label);
+    if(w.type==='klim'){
+      const sec=sectorText(st,w,dists,kz);
+      if(sec) lbl+=' ('+sec.replace(' @ ',' - ')+')';
+    }
+    items.push({m, label:lbl, type:w.type, nr:nrs[w.id]});
+  }
+  items.push({m:totM, label:Math.round((pointAtDist(track,dists,totM)||[0,0,0])[2]||0)+' m FINISH', type:'finish'});
+  ctx.font='bold 17px system-ui';
+  for(const it of items){
+    const x=px(it.m);
+    const p=pointAtDist(track,dists,it.m);
+    const yTop=(p&&p[2]!=null)? py(p[2]) : yBase;
+    ctx.strokeStyle='#666'; ctx.setLineDash([5,4]); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x,yTop); ctx.lineTo(x,58); ctx.stroke(); ctx.setLineDash([]);
+    ctx.save(); ctx.translate(x+5,yTop-12); ctx.rotate(-Math.PI/2);
+    ctx.fillStyle='#111'; ctx.textAlign='left';
+    ctx.fillText(it.label,0,0); ctx.restore();
+    if(it.type==='klim'&&it.nr!=null){
+      ctx.fillStyle='#E53935'; ctx.fillRect(x-13,28,26,23);
+      ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.fillText(String(it.nr),x,46);
+    } else if(it.type==='sprint'){
+      ctx.fillStyle='#43A047'; ctx.fillRect(x-13,28,26,23);
+      ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.fillText('S',x,46);
+    } else if(it.type==='finish'){
+      ctx.textAlign='center'; ctx.font='24px system-ui'; ctx.fillText('🏁',x,50); ctx.font='bold 17px system-ui';
+    } else if(it.type==='start'){
+      ctx.fillStyle='#1E88E5'; ctx.textAlign='center'; ctx.font='24px system-ui'; ctx.fillText('▶',x,50); ctx.font='bold 17px system-ui';
+    }
+  }
+  ctx.fillStyle='#111'; ctx.fillRect(ML-15,yBase,W-ML-MR+30,28);
+  ctx.fillStyle='#FFE01A'; ctx.font='bold 15px system-ui'; ctx.textAlign='center';
+  let lastX=-999;
+  const kmLbls=[{m:kz,txt:'0'}];
+  for(const it of items){ if(callTypes.includes(it.type)) kmLbls.push({m:it.m, txt:((it.m-kz)/1000).toFixed(1).replace('.0','').replace('.',',')}); }
+  kmLbls.push({m:totM, txt:((totM-kz)/1000).toFixed(0)+' km'});
+  for(const k of kmLbls){ const x=px(k.m); if(x-lastX<36) continue; ctx.fillText(k.txt,x,yBase+20); lastX=x; }
+  ctx.fillStyle='#111'; ctx.textAlign='left'; ctx.font='bold 26px system-ui';
+  ctx.fillText(cur.race.name+(cur.race.stages.length>1?' · '+st.name:'')+'  —  '+((totM-kz)/1000).toFixed(1).replace('.',',')+' km / '+totalAscent(track)+' hm', ML, 34);
+  const host=el('modalHost');
+  host.innerHTML='<div class="modal-bg"><div class="modal" style="max-width:96vw;width:1250px;background:#fff"><div id="tdfWrap" style="overflow:auto"></div><div class="btns"><button class="ghost" onclick="closeModal()">Sluiten</button><button class="primary" id="tdfDl">⬇ Download PNG</button></div></div></div>';
+  cv.style.width='100%'; cv.style.height='auto';
+  host.querySelector('#tdfWrap').appendChild(cv);
+  host.querySelector('.modal-bg').addEventListener('click',e=>{ if(e.target.classList.contains('modal-bg')) closeModal(); });
+  host.querySelector('#tdfDl').onclick=()=>{
+    const a=document.createElement('a');
+    a.href=cv.toDataURL('image/png');
+    a.download=safeName(cur.race.name+'_'+st.name)+'_profiel.png';
+    a.click();
+  };
+}
+
 /* ================= LIVE view ================= */
 const live={watch:null,lastIdx:0,simT:null,simM:0,speed:0,lastFix:null,wake:null,dists:null,kz:0,totM:0,curM:null,zoomKm:null,follow:true,t0:null,prevM:null,cumAsc:null,totAsc:0,clockT:null};
 
@@ -1800,6 +1907,7 @@ el('btnWmImport').onclick=()=>{
 };
 el('btnExportGpx').onclick=()=>{ const st=cur.stage; if(!st.track.length){alert('Geen route om te exporteren.');return;} download(safeName(cur.race.name+'_'+st.name)+'.gpx', buildGpx(st), 'application/gpx+xml'); };
 el('btnStagePrint').onclick=roadbook;
+el('btnTdf').onclick=tdfProfile;
 el('panelToggle').onclick=()=>el('sidePanel').classList.toggle('collapsed');
 function safeName(s){ return s.replace(/[^\w\-]+/g,'_').slice(0,60); }
 
