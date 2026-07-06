@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v10</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v11</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
   <button class="small ghost" id="btnImportAll" title="Backup terugzetten">⬆ Herstel</button>
@@ -1394,6 +1394,9 @@ function toggleLiveMap(){
     }
     if(!liveMap){
       liveMap=L.map('lvMap',{zoomControl:false,preferCanvas:true});
+      // direct een beginpositie zetten: lagen toevoegen aan een kaart zonder view laat Leaflet crashen
+      const t0=cur.stage.track;
+      liveMap.setView(t0.length? [t0[0][0],t0[0][1]] : [52.1,5.3], 12);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(liveMap);
       lvWms=L.layerGroup().addTo(liveMap);
       [1,2,5,10,25,'Full'].forEach(k=>{
@@ -1404,9 +1407,11 @@ function toggleLiveMap(){
       });
     }
     setTimeout(()=>{
-      liveMap.invalidateSize();
-      buildLiveMap();
-      if(live.curM!=null) updateLiveMap(live.curM);
+      try{
+        liveMap.invalidateSize();
+        buildLiveMap();
+        if(live.curM!=null) updateLiveMap(live.curM);
+      }catch(e){ el('lvStatus').textContent='Kaartfout: '+e.message; }
     },150);
   }
   drawLiveProfile(live.curM);
@@ -1437,7 +1442,7 @@ function buildLiveMap(){
   liveMap.fitBounds(lvRoute.getBounds(),{padding:[20,20]});
 }
 function updateLiveMap(m){
-  if(!liveMap || el('lvMapWrap').classList.contains('hidden') || m==null) return;
+  if(!liveMap || !liveMap._loaded || el('lvMapWrap').classList.contains('hidden') || m==null) return;
   const p=pointAtDist(cur.stage.track,live.dists,m); if(!p) return;
   if(!lvPos) lvPos=L.circleMarker([p[0],p[1]],{radius:8,color:'#fff',fillColor:'#3ba3ff',fillOpacity:1,weight:2}).addTo(liveMap);
   else lvPos.setLatLng([p[0],p[1]]);
