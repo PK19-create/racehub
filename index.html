@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v8</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v9</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
   <button class="small ghost" id="btnImportAll" title="Backup terugzetten">⬆ Herstel</button>
@@ -1006,7 +1006,7 @@ function drawProfile(){
   const kStep = niceStep((totM-kz)/1000/8)*1000;
   for(let m=kz+kStep; m<totM; m+=kStep){
     ctx.strokeStyle='#222c3a'; ctx.beginPath(); ctx.moveTo(px(m),PADT); ctx.lineTo(px(m),H-PADB); ctx.stroke();
-    ctx.textAlign='center'; ctx.fillStyle='#8a99ab'; ctx.fillText(((m-kz)/1000)+'', px(m), H-6);
+    ctx.textAlign='center'; ctx.fillStyle='#8a99ab'; ctx.fillText(Math.round((m-kz)/1000)+'', px(m), H-6);
   }
 
   // vlakken gekleurd op stijgingspercentage
@@ -1326,7 +1326,7 @@ function drawLiveProfile(m){
   const gStep=5000;
   for(let gm=Math.ceil((a-kz)/gStep)*gStep+kz; gm<=b; gm+=gStep){
     ctx.strokeStyle='#222c3a'; ctx.beginPath(); ctx.moveTo(px(gm),PT); ctx.lineTo(px(gm),H-PB); ctx.stroke();
-    ctx.fillStyle='#8a99ab'; ctx.fillText(((gm-kz)/1000)+'', px(gm), H-4);
+    ctx.fillStyle='#8a99ab'; ctx.fillText(Math.round((gm-kz)/1000)+'', px(gm), H-4);
   }
   if(kz>a && kz<b){
     ctx.fillStyle='#ffffff12'; ctx.fillRect(px(a),PT,px(Math.min(kz,b))-px(a),H-PT-PB);
