@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v14</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v15</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
   <button class="small ghost" id="btnImportAll" title="Backup terugzetten">⬆ Herstel</button>
@@ -268,6 +268,14 @@ const WM_TYPES = {
   spoor:    {label:'Spoorweg',    em:'🚂', color:'#c9d4e0'},
   tunnel:   {label:'Tunnel',      em:'🚇', color:'#9b59b6'},
   brug:     {label:'Brug',        em:'🌉', color:'#3ba3ff'},
+  drempel:  {label:'Drempel',     em:'⛗',  color:'#f1c40f'},
+  slechtweg:{label:'Slecht wegdek',em:'🕳️', color:'#b06a3b'},
+  vlucht:   {label:'Middenberm',  em:'🏝️', color:'#f1c40f'},
+  chicane:  {label:'Chicane',     em:'〰️', color:'#ff8c42'},
+  waaiers:  {label:'Waaiers',     em:'💨', color:'#ff8c42'},
+  wielen:   {label:'Wielen',      em:'🛞', color:'#9b59b6'},
+  ehbo:     {label:'EHBO',        em:'🚑', color:'#e74c3c'},
+  deviatie: {label:'Deviatie',    em:'🔀', color:'#3ba3ff'},
   kassei:   {label:'Kasseien',    em:'🧱', color:'#b06a3b'},
   gravel:   {label:'Gravel',      em:'🪨', color:'#8f7a4f'},
   kom:      {label:'Dorpskern',   em:'🏘️', color:'#8a99ab'},
@@ -319,9 +327,9 @@ function totalAscent(track){
 }
 /* groepen voor de waymarker-kiezer */
 const WM_GROUPS=[
-  ['Gevaar',     ['gevaar','bocht','rotonde','smal','spoor','tunnel','brug','kom','afdaling']],
+  ['Gevaar',     ['gevaar','bocht:L','bocht:R','rotonde','smal','chicane','vlucht','drempel','slechtweg','spoor','tunnel','brug','kom','afdaling','waaiers']],
   ['Essentieel', ['klim','sprint','bonus','kassei','gravel','start','finish']],
-  ['Logistiek',  ['feed','afval','mat','info']],
+  ['Logistiek',  ['feed','afval','wielen','ehbo','mat','deviatie','info']],
 ];
 function recentTypes(){ try{ return JSON.parse(localStorage.getItem('rh-recent-types'))||[]; }catch(e){ return []; } }
 function pushRecentType(t){
@@ -522,6 +530,9 @@ function wmFace(w,t,pxSize){
       '<path d="M12.6 5.2 L20 9.6 L12.6 14 Z" fill="#fff"/>';
     const g=(w.dir==='L')? '<g transform="scale(-1,1) translate(-24,0)">'+arrow+'</g>' : arrow;
     return {html:'<svg viewBox="0 0 24 24" width="'+pxSize+'" height="'+pxSize+'" style="display:block">'+g+'</svg>', bg:t.color};
+  }
+  if(w.type==='drempel'){
+    return {html:'<svg viewBox="0 0 24 24" width="'+pxSize+'" height="'+pxSize+'" style="display:block"><path d="M3 17 H8 Q12 9 16 17 H21" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round"/></svg>', bg:t.color};
   }
   return {html:t.em, bg:t.color+'22'};
 }
@@ -1123,16 +1134,20 @@ function wmModal(w, presetKm){
   const maxKm=(dists[dists.length-1]-kz)/1000;
   const minKm=-kz/1000;
   const isNew=!w;
-  let selType = w? w.type : (recentTypes()[0]||'klim');
+  let selKey = w? (w.type==='bocht'? 'bocht:'+(w.dir==='L'?'L':'R') : w.type) : (recentTypes()[0]||'klim');
+  let selType = selKey.split(':')[0];
   const btn=k=>{
-    const f=wmFace({type:k},WM_TYPES[k],14);
-    return '<button class="type-btn'+(k===selType?' sel':'')+'" data-t="'+k+'"><span class="em" style="display:flex;width:24px;height:24px;border-radius:50%;align-items:center;justify-content:center;background:'+f.bg+'">'+f.html+'</span>'+WM_TYPES[k].label+'</button>';
+    const parts=k.split(':'), ty=parts[0], dr=parts[1];
+    if(!WM_TYPES[ty]) return '';
+    const f=wmFace({type:ty, dir:dr||'R', deg:dr?90:null}, WM_TYPES[ty], 14);
+    const lbl = dr? (dr==='L'?'Bocht links':'Bocht rechts') : WM_TYPES[ty].label;
+    return '<button class="type-btn'+(k===selKey?' sel':'')+'" data-t="'+k+'"><span class="em" style="display:flex;width:24px;height:24px;border-radius:50%;align-items:center;justify-content:center;background:'+f.bg+'">'+f.html+'</span>'+lbl+'</button>';
   };
   let groupsHtml='';
-  const rec=recentTypes().filter(k=>WM_TYPES[k]);
+  const rec=recentTypes().filter(k=>WM_TYPES[k.split(':')[0]]);
   if(rec.length) groupsHtml+='<div class="tg-head">Recent</div><div class="type-grid">'+rec.map(btn).join('')+'</div>';
   for(const [gname,keys] of WM_GROUPS)
-    groupsHtml+='<div class="tg-head">'+gname+'</div><div class="type-grid">'+keys.filter(k=>WM_TYPES[k]).map(btn).join('')+'</div>';
+    groupsHtml+='<div class="tg-head">'+gname+'</div><div class="type-grid">'+keys.map(btn).join('')+'</div>';
   modal(
     '<h2>'+(isNew?'Waymarker toevoegen':'Waymarker bewerken')+'</h2>'+
     '<input id="mSearch" placeholder="🔍 Zoek type…" style="margin-bottom:4px">'+
@@ -1145,14 +1160,17 @@ function wmModal(w, presetKm){
     '<div class="btns"><button class="ghost" onclick="closeModal()">Annuleer</button><button class="primary" id="mSave">Opslaan</button></div>',
     m=>{
       m.querySelectorAll('.type-btn').forEach(b=>b.onclick=()=>{
-        selType=b.dataset.t;
-        m.querySelectorAll('.type-btn').forEach(x=>x.classList.toggle('sel',x.dataset.t===selType));
+        selKey=b.dataset.t;
+        const p=selKey.split(':');
+        selType=p[0];
+        if(p[1]) m.querySelector('#mDir').value=p[1];
+        m.querySelectorAll('.type-btn').forEach(x=>x.classList.toggle('sel',x.dataset.t===selKey));
         m.querySelector('#mBendRow').style.display = selType==='bocht'? '':'none';
       });
       m.querySelector('#mSearch').addEventListener('input',e=>{
         const q=e.target.value.toLowerCase();
         m.querySelectorAll('#mGroups .type-btn').forEach(b=>{
-          b.style.display = WM_TYPES[b.dataset.t].label.toLowerCase().includes(q)? '':'none';
+          b.style.display = b.textContent.toLowerCase().includes(q)? '':'none';
         });
         m.querySelectorAll('#mGroups .tg-head').forEach(h=>{
           const grid=h.nextElementSibling;
@@ -1166,10 +1184,10 @@ function wmModal(w, presetKm){
         let endKm = evRaw===''? null : Math.max(minKm,Math.min(maxKm,+evRaw));
         if(endKm!=null && (isNaN(endKm)||endKm<=km)) endKm=null;
         const data={type:selType,name:m.querySelector('#mName').value.trim(),km,endKm,note:m.querySelector('#mNote').value.trim()};
-        if(selType==='bocht'){ data.dir=m.querySelector('#mDir').value; data.deg=+m.querySelector('#mDeg').value||null; }
+        if(selType==='bocht'){ data.dir=m.querySelector('#mDir').value; data.deg=+m.querySelector('#mDeg').value||90; }
         if(isNew) st.waymarkers.push({id:uid(),...data});
         else Object.assign(w,data);
-        pushRecentType(selType);
+        pushRecentType(selType==='bocht'? 'bocht:'+data.dir : selType);
         save(); closeModal(); renderStage(false);
       };
     });
