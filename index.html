@@ -150,8 +150,9 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v22</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v23</small></div>
   <div class="crumb" id="crumb"></div>
+  <button class="small ghost" id="btnUndo" title="Laatste wijziging ongedaan maken">↩</button>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
   <button class="small ghost" id="btnImportAll" title="Backup terugzetten">⬆ Herstel</button>
 </header>
@@ -293,9 +294,30 @@ function load(){
   try{ const s = JSON.parse(localStorage.getItem(LS_KEY)); if(s && s.races) return s; }catch(e){}
   return {races:[]};
 }
+let undoStack=[];
 function save(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+  try{
+    const prev=localStorage.getItem(LS_KEY);
+    if(prev){ undoStack.push(prev); if(undoStack.length>30) undoStack.shift(); }
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+  }
   catch(e){ alert('Opslaan mislukt (opslag vol?). Maak een backup en verwijder oude koersen.'); }
+}
+function undoLast(){
+  const prev=undoStack.pop();
+  if(!prev){ alert('Niets om ongedaan te maken.'); return; }
+  state=JSON.parse(prev);
+  try{ localStorage.setItem(LS_KEY, prev); }catch(e){}
+  if(!el('liveView').classList.contains('hidden')) exitLive();
+  if(cur.stage){
+    const r=state.races.find(x=>x.id===cur.race.id);
+    const s=r? r.stages.find(x=>x.id===cur.stage.id) : null;
+    if(r&&s){
+      cur.race=r; cur.stage=s;
+      el('stT0').value=s.t0time||''; el('stSpeed').value=s.avgSpeed||'';
+      renderStage(false); refreshCrumb();
+    } else { cur={race:null,stage:null}; showHub(); }
+  } else renderHub();
 }
 const uid = () => Math.random().toString(36).slice(2,10);
 const fmtKm = m => (m/1000).toFixed(1).replace('.',',');
@@ -2012,7 +2034,8 @@ el('btnTdf').onclick=tdfProfile;
 el('panelToggle').onclick=()=>el('sidePanel').classList.toggle('collapsed');
 function safeName(s){ return s.replace(/[^\w\-]+/g,'_').slice(0,60); }
 
-/* backup / restore */
+/* backup / restore / undo */
+el('btnUndo').onclick=undoLast;
 el('btnExportAll').onclick=()=>download('racehub-backup-'+new Date().toISOString().slice(0,10)+'.json', JSON.stringify(state), 'application/json');
 el('btnImportAll').onclick=()=>{
   const inp=document.createElement('input'); inp.type='file'; inp.accept='.json';
