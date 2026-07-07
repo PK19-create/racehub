@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v26</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v27</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnUndo" title="Laatste wijziging ongedaan maken">↩</button>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
@@ -450,12 +450,19 @@ function detectBends(track, dists){
     if(last && c.m-last.m<120){ if(Math.abs(c.ang)>Math.abs(last.ang)){ last.m=c.m; last.ang=c.ang; } }
     else merged.push({...c});
   }
-  let res=merged.map(c=>({type:'bocht', name:'Scherpe bocht '+(c.ang>0?'rechts':'links'), km:c.m, endKm:null, dir:c.ang>0?'R':'L', deg:Math.round(Math.abs(c.ang)), note:'auto'}));
-  if(res.length>40){
-    res.sort((a,b)=>b.deg-a.deg);
-    res=res.slice(0,40).sort((a,b)=>a.km-b.km);
+  // clusteren op fysieke locatie: het plafond geldt per unieke plek, alle rondepassages blijven behouden
+  const locs=[];
+  for(const c of merged){
+    const pt=pointAtDist(track,dists,c.m);
+    if(!pt) continue;
+    let cl=locs.find(L=>hav(L.pt,pt)<60);
+    if(!cl){ cl={pt, deg:0, leden:[]}; locs.push(cl); }
+    cl.deg=Math.max(cl.deg, Math.abs(c.ang));
+    cl.leden.push(c);
   }
-  return res;
+  locs.sort((a,b)=>b.deg-a.deg);
+  const keep=locs.slice(0,30).flatMap(L=>L.leden).sort((a,b)=>a.m-b.m);
+  return keep.map(c=>({type:'bocht', name:'Scherpe bocht '+(c.ang>0?'rechts':'links'), km:c.m, endKm:null, dir:c.ang>0?'R':'L', deg:Math.round(Math.abs(c.ang)), note:'auto'}));
 }
 /* spoorwegovergangen, rotondes en tunnels via OpenStreetMap (Overpass) */
 async function osmSuggest(st, dists){
@@ -530,7 +537,10 @@ async function analyzeRoute(){
 }
 function reviewSuggestions(sugg, kz, osmError){
   const st=cur.stage;
-  sugg=sugg.filter(s=>!st.waymarkers.some(w=>w.type===s.type && Math.abs((kz+w.km*1000)-s.km)<150));
+  sugg=sugg.filter(s=>{
+    const rad = s.type==='bocht'? 60 : 150;
+    return !st.waymarkers.some(w=>w.type===s.type && Math.abs((kz+w.km*1000)-s.km)<rad);
+  });
   sugg.sort((a,b)=>a.km-b.km);
   const osmNote=osmError? '<p style="color:var(--muted);font-size:12px">OSM-data (spoor/rotondes/tunnels) niet bereikbaar; alleen profiel- en bocht-analyse.</p>':'';
   if(!sugg.length){
@@ -658,34 +668,6 @@ function smoothGrads(track,dists){
     while(q<n-1 && dists[q]-dists[i+1]<150) q++;
     const dd=dists[q]-dists[p];
     if(dd>30 && sm[p]!=null && sm[q]!=null) g[i]=(sm[q]-sm[p])/dd;
-  }
-  return g;
-}
-/* vast nummer per waymarker (volgorde op km) */
-function wmNumber(st){
-  const s=[...st.waymarkers].sort((a,b)=>a.km-b.km);
-  const m={}; s.forEach((w,i)=>m[w.id]=i+1); return m;
-}
-/* kleur op stijgingspercentage */
-function gradColor(g){
-  if(g==null) return '#5a6470';
-  const p=g*100;
-  if(p<-2) return '#3b82c4';
-  if(p<2)  return '#3f9d5a';
-  if(p<4)  return '#d8c93a';
-  if(p<7)  return '#ff8c42';
-  if(p<10) return '#e74c3c';
-  return '#8e2020';
-}
-/* gesmoothde gradient per segment (±100 m venster) */
-function smoothGrads(track,dists){
-  const n=track.length, g=new Array(Math.max(0,n-1)).fill(null);
-  for(let i=0;i<n-1;i++){
-    let a=i,b=i+1;
-    while(a>0 && dists[i]-dists[a]<100) a--;
-    while(b<n-1 && dists[b]-dists[i+1]<100) b++;
-    const dd=dists[b]-dists[a];
-    if(dd>10 && track[a][2]!=null && track[b][2]!=null) g[i]=(track[b][2]-track[a][2])/dd;
   }
   return g;
 }
@@ -1299,7 +1281,9 @@ function tdfProfile(){
     for(let i=0;i<track.length;i++){ const e=track[i][2]??le; le=e; ctx.lineTo(px(dists[i]),py(e)); }
     ctx.lineTo(px(totM),yBase); ctx.closePath();
   };
+  // geel vlak
   areaPath(); ctx.fillStyle='#FFE01A'; ctx.fill();
+  // klimsectoren: groen <4%, blauw 4-6%, rood ≥6%
   for(const w of st.waymarkers){
     if(w.type!=='klim'||w.endKm==null||w.endKm<=w.km) continue;
     const a=Math.max(0,kz+w.km*1000), b=Math.min(totM,kz+w.endKm*1000);
@@ -1313,14 +1297,17 @@ function tdfProfile(){
     ctx.fillStyle=col; ctx.fillRect(px(a),0,px(b)-px(a),H);
     ctx.restore();
   }
+  // horizontale hulplijnen binnen het vlak
   ctx.save(); areaPath(); ctx.clip();
   ctx.strokeStyle='#00000022'; ctx.lineWidth=1;
   const eStep=niceStep(eSpan/8);
   for(let e=Math.ceil(minE/eStep)*eStep;e<maxE;e+=eStep){ ctx.beginPath(); ctx.moveTo(0,py(e)); ctx.lineTo(W,py(e)); ctx.stroke(); }
   ctx.restore();
+  // zwarte contour
   ctx.beginPath(); let le2=track[0][2]??minE; ctx.moveTo(px(0),py(le2));
   for(let i=1;i<track.length;i++){ const e=track[i][2]??le2; le2=e; ctx.lineTo(px(dists[i]),py(e)); }
   ctx.strokeStyle='#111'; ctx.lineWidth=2.5; ctx.stroke();
+  // callouts: klim/sprint/bevoorrading/afval + start + finish
   const nrs=wmNumber(st);
   const callTypes=['klim','sprint','feed','afval'];
   const items=[];
@@ -1359,6 +1346,7 @@ function tdfProfile(){
       ctx.fillStyle='#1E88E5'; ctx.textAlign='center'; ctx.font='24px system-ui'; ctx.fillText('▶',x,50); ctx.font='bold 17px system-ui';
     }
   }
+  // zwarte km-as met gele nummers
   ctx.fillStyle='#111'; ctx.fillRect(ML-15,yBase,W-ML-MR+30,28);
   ctx.fillStyle='#FFE01A'; ctx.font='bold 15px system-ui'; ctx.textAlign='center';
   let lastX=-999;
@@ -1366,8 +1354,10 @@ function tdfProfile(){
   for(const it of items){ if(callTypes.includes(it.type)) kmLbls.push({m:it.m, txt:((it.m-kz)/1000).toFixed(1).replace('.0','').replace('.',',')}); }
   kmLbls.push({m:totM, txt:((totM-kz)/1000).toFixed(0)+' km'});
   for(const k of kmLbls){ const x=px(k.m); if(x-lastX<36) continue; ctx.fillText(k.txt,x,yBase+20); lastX=x; }
+  // titel
   ctx.fillStyle='#111'; ctx.textAlign='left'; ctx.font='bold 26px system-ui';
   ctx.fillText(cur.race.name+(cur.race.stages.length>1?' · '+st.name:'')+'  —  '+((totM-kz)/1000).toFixed(1).replace('.',',')+' km / '+totalAscent(track)+' hm', ML, 34);
+  // modal
   const host=el('modalHost');
   host.innerHTML='<div class="modal-bg"><div class="modal" style="max-width:96vw;width:1250px;background:#fff"><div id="tdfWrap" style="overflow:auto"></div><div class="btns"><button class="ghost" onclick="closeModal()">Sluiten</button><button class="primary" id="tdfDl">⬇ Download PNG</button></div></div></div>';
   cv.style.width='100%'; cv.style.height='auto';
@@ -1634,6 +1624,7 @@ function drawLiveProfile(m){
   const b = a+winLen;
   const PL=36,PR=10,PT=18,PB=16;
   const px=mm=>PL+((mm-a)/(b-a))*(W-PL-PR);
+  // hoogtebereik binnen venster
   let minE=Infinity,maxE=-Infinity;
   for(let i=0;i<track.length;i++){
     if(dists[i]<a||dists[i]>b) continue;
@@ -1645,15 +1636,18 @@ function drawLiveProfile(m){
   if(maxE-minE<40){ const mid=(maxE+minE)/2; minE=mid-20; maxE=mid+20; }
   const padE=(maxE-minE)*0.12; minE-=padE; maxE+=padE;
   const py=e=>PT+(1-(e-minE)/(maxE-minE))*(H-PT-PB);
+  // km-gridlijnen elke 5 km (relatief)
   ctx.font='10px system-ui'; ctx.textAlign='center';
   const gStep=5000;
   for(let gm=Math.ceil((a-kz)/gStep)*gStep+kz; gm<=b; gm+=gStep){
     ctx.strokeStyle='#222c3a'; ctx.beginPath(); ctx.moveTo(px(gm),PT); ctx.lineTo(px(gm),H-PB); ctx.stroke();
     ctx.fillStyle='#8a99ab'; ctx.fillText(Math.round((gm-kz)/1000)+'', px(gm), H-4);
   }
+  // neutrale zone
   if(kz>a && kz<b){
     ctx.fillStyle='#ffffff12'; ctx.fillRect(px(a),PT,px(Math.min(kz,b))-px(a),H-PT-PB);
   }
+  // profiel binnen venster
   // geel vlak (Tour-stijl), alleen klimmen gekleurd per 100 m
   ctx.beginPath(); let started=false, lastE=null;
   ctx.moveTo(px(a),H-PB);
@@ -1676,6 +1670,7 @@ function drawLiveProfile(m){
     else ctx.lineTo(px(dists[i]),py(e));
   }
   if(started){ ctx.strokeStyle='#00000088'; ctx.lineWidth=1.4; ctx.stroke(); }
+  // waymarkers in venster
   for(const w of st.waymarkers){
     if(w.endKm==null || w.endKm<=w.km) continue;
     const t=WM_TYPES[w.type]||WM_TYPES.info;
@@ -1692,6 +1687,7 @@ function drawLiveProfile(m){
     ctx.beginPath(); ctx.moveTo(px(wm),PT+8); ctx.lineTo(px(wm),H-PB); ctx.stroke();
     ctx.fillText(t.em, px(wm), PT+4);
   }
+  // huidige positie
   if(m!=null){
     const p=pointAtDist(track,dists,m);
     const yy=(p&&p[2]!=null)? py(p[2]) : H-PB;
