@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v23</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v24</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnUndo" title="Laatste wijziging ongedaan maken">↩</button>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
@@ -492,6 +492,22 @@ async function analyzeRoute(){
       sugg.push(...findRuns(ele,step,1), ...findRuns(ele,step,-1));
     }
     sugg.push(...detectBends(st.track,dists));
+    // rondekoers: gedetecteerde klimmen aanvullen op alle passages van dezelfde plek
+    for(const k of sugg.filter(x=>x.type==='klim')){
+      const loc=pointAtDist(st.track,dists,k.km);
+      if(!loc) continue;
+      const pasm=[]; let last=-1e9;
+      for(let i=0;i<st.track.length;i++){
+        if(hav(st.track[i],[loc[0],loc[1]])<60){ if(dists[i]-last>1000) pasm.push(dists[i]); last=dists[i]; }
+      }
+      if(pasm.length<2) continue;
+      const len=k.endKm-k.km;
+      for(const pm of pasm){
+        if(pm<0) continue;
+        if(sugg.some(x=>x.type==='klim' && Math.abs(x.km-pm)<300)) continue;
+        sugg.push({type:'klim', name:k.name, km:pm, endKm:pm+len, note:(k.note||'')+' · ronde-aanvulling'});
+      }
+    }
     let osmError=false;
     try{ sugg.push(...await osmSuggest(st,dists)); }catch(e){ osmError=true; }
     reviewSuggestions(sugg, kz, osmError);
