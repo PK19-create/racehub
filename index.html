@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v21</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v22</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
   <button class="small ghost" id="btnImportAll" title="Backup terugzetten">⬆ Herstel</button>
@@ -536,6 +536,19 @@ function wmFace(w,t,pxSize){
     return {html:'<svg viewBox="0 0 24 24" width="'+pxSize+'" height="'+pxSize+'" style="display:block"><path d="M3 17 H8 Q12 9 16 17 H21" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round"/></svg>', bg:t.color};
   }
   return {html:t.em, bg:t.color+'22'};
+}
+/* alle passages (rel. km) van de locatie op absM; voor rondekoersen */
+function passagesOf(st, dists, kz, absM){
+  const loc=pointAtDist(st.track,dists,absM);
+  if(!loc) return [];
+  const out=[]; let last=-1e9;
+  for(let i=0;i<st.track.length;i++){
+    if(hav(st.track[i],[loc[0],loc[1]])<40){
+      if(dists[i]-last>1000) out.push(+(((dists[i]-kz)/1000)).toFixed(2));
+      last=dists[i];
+    }
+  }
+  return out;
 }
 /* vast nummer per waymarker (volgorde op km) */
 function wmNumber(st){
@@ -1111,9 +1124,17 @@ function renderStage(fit){
     const t=WM_TYPES[w.type]||WM_TYPES.info;
     const sec=sectorText(st,w,dists,kz);
     const face=wmFace(w,t,9);
-    const mk=L.marker([p[0],p[1]],{icon:L.divIcon({
+    const mk=L.marker([p[0],p[1]],{draggable:true, icon:L.divIcon({
       className:'', html:'<div style="position:relative;width:14px;height:14px"><div class="wm-divicon" style="width:14px;height:14px;font-size:8px;background:'+face.bg+';border-color:'+t.color+'">'+face.html+'</div><div class="wm-nr">'+nrs[w.id]+'</div></div>',
       iconSize:[14,14], iconAnchor:[7,7]})});
+    mk.on('dragend',()=>{
+      const ll=mk.getLatLng();
+      const idx=nearestIdx(st.track, ll.lat, ll.lng);
+      const nieuwKm=+(((dists[idx]-kz)/1000)).toFixed(2);
+      if(w.endKm!=null) w.endKm=+((w.endKm + (nieuwKm-w.km))).toFixed(2);
+      w.km=nieuwKm;
+      save(); renderStage(false);
+    });
     mk.bindPopup('<b>#'+nrs[w.id]+' '+t.em+' '+esc(w.name||t.label)+'</b><br>km '+w.km.toFixed(1)+
       (sec?' · '+sec:'')+(etaText(st,w.km)?' · ~'+etaText(st,w.km):'')+(w.note?'<br>'+esc(w.note):'')+
       '<br><a href="https://www.google.com/maps?layer=c&cbll='+p[0]+','+p[1]+'" target="_blank">StreetView</a> · '+
@@ -1208,7 +1229,13 @@ function wmModal(w, presetKm){
         if(endKm!=null && (isNaN(endKm)||endKm<=km)) endKm=null;
         const data={type:selType,name:m.querySelector('#mName').value.trim(),km,endKm,note:m.querySelector('#mNote').value.trim()};
         if(selType==='bocht'){ data.dir=m.querySelector('#mDir').value; data.deg=+m.querySelector('#mDeg').value||90; }
-        if(isNew) st.waymarkers.push({id:uid(),...data});
+        if(isNew){
+          const pas=passagesOf(st,dists,kz,kz+km*1000);
+          if(pas.length>1 && confirm('Dit punt wordt '+pas.length+'× gepasseerd (rondekoers). Waymarker op alle '+pas.length+' passages plaatsen?')){
+            const len=(endKm!=null)? endKm-km : null;
+            for(const pk of pas) st.waymarkers.push({id:uid(),...data, km:pk, endKm: len!=null? +((pk+len)).toFixed(2) : null});
+          } else st.waymarkers.push({id:uid(),...data});
+        }
         else Object.assign(w,data);
         pushRecentType(selType==='bocht'? 'bocht:'+data.dir : selType);
         save(); closeModal(); renderStage(false);
