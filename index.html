@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v28</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v29</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnUndo" title="Laatste wijziging ongedaan maken">↩</button>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
@@ -231,6 +231,8 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
     <div class="lv-status" id="lvStatus">–</div>
     <button class="small" id="lvClock" title="Tijd, gemiddelde, tijdslimiet en km 0">⏱</button>
     <button class="small" id="lvMapBtn" title="Kaart tonen/verbergen">🗺 Kaart</button>
+    <button class="small" id="lvRstN" title="Terug naar start neutralisatie">⟲ Neutr.</button>
+    <button class="small" id="lvRstK0" title="Terug naar km 0">⟲ Km 0</button>
     <button class="small" id="lvSim" title="Simulatie op 42 km/u">SIM</button>
     <button class="small" id="lvSim80" title="Simulatie op 80 km/u">SIM 80</button>
     <button class="small danger" id="lvExit">✕ Stop</button>
@@ -1410,6 +1412,7 @@ function enterLive(){
   },700);
   el('liveView').classList.remove('hidden');
   el('lvName').textContent=cur.race.name+(cur.race.stages.length>1?' · '+st.name:'');
+  el('lvRstN').style.display=(st.kmZero>0)?'':'none';
   el('lvStatus').textContent='GPS zoeken…';
   if(liveMap && !el('lvMapWrap').classList.contains('hidden')) setTimeout(()=>{ liveMap.invalidateSize(); buildLiveMap(); },150);
   startGps();
@@ -1848,6 +1851,19 @@ el('lvExit').onclick=exitLive;
 el('lvMapBtn').onclick=toggleLiveMap;
 el('lvClock').onclick=clockModal;
 window.rhCopy=t=>{ (navigator.clipboard? navigator.clipboard.writeText(t) : Promise.reject()).then(()=>{},()=>prompt('Kopieer:',t)); };
+/* terug naar start neutralisatie of km 0: teller, km0-klok en herstart-geheugen resetten;
+   GPS of SIM pakt daarna de passage rond dat punt op */
+function liveResetTo(m){
+  live.t0=null; live.prevM=null;
+  live.resumeM=null; live.needResume=false; live.lastSaveT=0;
+  try{ localStorage.removeItem('racehub-live-resume'); }catch(e){}
+  if(live.simT) live.simM=m;
+  live.fixM=null;
+  updateLiveFromM(m);
+  el('lvStatus').textContent='⟲ teruggezet naar '+(m<live.kz?'start neutralisatie':'km 0');
+}
+el('lvRstN').onclick=()=>liveResetTo(0);
+el('lvRstK0').onclick=()=>liveResetTo(live.kz||0);
 el('lvSim').onclick=()=>{ if(live.simT && live.simSpeed===42){ stopSim(); el('lvStatus').textContent='SIM gestopt'; } else startSim(42); };
 el('lvSim80').onclick=()=>{ if(live.simT && live.simSpeed===80){ stopSim(); el('lvStatus').textContent='SIM gestopt'; } else startSim(80); };
 
