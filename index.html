@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v27</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v28</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnUndo" title="Laatste wijziging ongedaan maken">↩</button>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
@@ -1372,7 +1372,7 @@ function tdfProfile(){
 }
 
 /* ================= LIVE view ================= */
-const live={watch:null,lastIdx:0,simT:null,simM:0,speed:0,lastFix:null,wake:null,dists:null,kz:0,totM:0,curM:null,zoomKm:null,follow:true,t0:null,prevM:null,cumAsc:null,totAsc:0,clockT:null,fixM:null,fixT:0,predT:null};
+const live={watch:null,lastIdx:0,simT:null,simM:0,speed:0,lastFix:null,wake:null,dists:null,kz:0,totM:0,curM:null,zoomKm:null,follow:true,t0:null,prevM:null,cumAsc:null,totAsc:0,clockT:null,fixM:null,fixT:0,predT:null,resumeM:null,needResume:false,lastSaveT:0};
 
 function enterLive(){
   const st=cur.stage;
@@ -1380,6 +1380,12 @@ function enterLive(){
   live.dists=cumDist(st.track); live.kz=st.kmZero||0; live.totM=live.dists[live.dists.length-1];
   live.lastIdx=0; live.speed=0; live.lastFix=null; live.curM=null; live.zoomKm=null; live.follow=true;
   live.t0=null; live.prevM=null;
+  // herstart-geheugen: recente positie op déze etappe? dan straks de juiste rondepassage kiezen
+  live.resumeM=null; live.needResume=false; live.lastSaveT=0;
+  try{
+    const rs=JSON.parse(localStorage.getItem('racehub-live-resume')||'null');
+    if(rs && rs.stageId===st.id && Date.now()-rs.t<30*60*1000 && rs.m>0){ live.resumeM=rs.m; live.needResume=true; }
+  }catch(e){}
   // cumulatieve klimmeters voorberekenen
   live.cumAsc=new Array(st.track.length).fill(0);
   { let up=0,lastEle=null;
@@ -1435,16 +1441,33 @@ function startGps(){
     el('lvStatus').textContent='Geen GPS-toegang – gebruik SIM';
   }, {enableHighAccuracy:true, maximumAge:0, timeout:15000});
 }
-/* zoek positie op route; eerst lokaal rond laatste index (lusbestendig), anders globaal */
+/* zoek positie op route; eerst lokaal rond laatste index (lusbestendig), anders globaal.
+   Bij een herstart (needResume) kiezen we van alle rondepassages de passage die het dichtst
+   bij de laatst bewaarde positie ligt, zodat ronde 4 niet als ronde 1 wordt gelezen. */
 function positionOnRoute(lat,lng){
   const track=cur.stage.track;
-  const lo=Math.max(0,live.lastIdx-40), hi=Math.min(track.length-1, live.lastIdx+400);
-  let best=lo, bd=Infinity;
-  for(let i=lo;i<=hi;i++){ const d=hav(track[i],[lat,lng]); if(d<bd){bd=d;best=i;} }
-  if(bd>400){
-    let gb=0, gd=Infinity;
-    for(let i=0;i<track.length;i++){ const d=hav(track[i],[lat,lng]); if(d<gd){gd=d;gb=i;} }
-    best=gb; bd=gd;
+  let best=0, bd=Infinity;
+  if(!live.needResume){
+    const lo=Math.max(0,live.lastIdx-40), hi=Math.min(track.length-1, live.lastIdx+400);
+    best=lo;
+    for(let i=lo;i<=hi;i++){ const d=hav(track[i],[lat,lng]); if(d<bd){bd=d;best=i;} }
+  }
+  if(live.needResume || bd>400){
+    let gd=Infinity;
+    const ds=new Array(track.length);
+    for(let i=0;i<track.length;i++){ ds[i]=hav(track[i],[lat,lng]); if(ds[i]<gd) gd=ds[i]; }
+    let gb=-1;
+    if(live.resumeM!=null){
+      let bestDiff=Infinity;
+      for(let i=0;i<track.length;i++){
+        if(ds[i]>gd+60) continue; // alle passages van dezelfde fysieke plek
+        const diff=Math.abs(live.dists[i]-live.resumeM);
+        if(diff<bestDiff){ bestDiff=diff; gb=i; }
+      }
+    }
+    if(gb<0){ gd=Infinity; gb=0; for(let i=0;i<track.length;i++){ if(ds[i]<gd){gd=ds[i];gb=i;} } }
+    best=gb; bd=ds[gb];
+    live.needResume=false;
   }
   live.lastIdx=best;
   live.fixM=live.dists[best]; live.fixT=Date.now();
@@ -1468,6 +1491,11 @@ function updateLive(m){
   // km 0-passage automatisch registreren
   if(live.t0==null && live.prevM!=null && live.prevM<live.kz && m>=live.kz) live.t0=Date.now();
   live.prevM=m;
+  // herstart-geheugen bijwerken (niet tijdens SIM), elke 5 s
+  if(!live.simT && Date.now()-live.lastSaveT>5000){
+    try{ localStorage.setItem('racehub-live-resume', JSON.stringify({stageId:st.id, m, t:Date.now()})); }catch(e){}
+    live.lastSaveT=Date.now();
+  }
   updateClockTiles();
   const nrs=wmNumber(st);
   const all=[...st.waymarkers].map(w=>({...w, absM:live.kz+w.km*1000})).sort((a,b)=>a.absM-b.absM);
