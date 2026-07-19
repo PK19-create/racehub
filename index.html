@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v31</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v32</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnUndo" title="Laatste wijziging ongedaan maken">↩</button>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
@@ -1723,6 +1723,21 @@ function drawLiveProfile(m){
     else ctx.lineTo(px(dists[i]),py(e));
   }
   if(started){ ctx.strokeStyle='#00000088'; ctx.lineWidth=1.4; ctx.stroke(); }
+  // hoogte-gridlijnen (wit) met meterlabels
+  if(hasEle){
+    const range=maxE-minE;
+    const steps=[10,20,25,50,100,200,250,500,1000];
+    const eStep=steps.find(s=>range/s<=6)||1000;
+    ctx.textAlign='left'; ctx.font='10px system-ui';
+    for(let ge=Math.ceil(minE/eStep)*eStep; ge<=maxE; ge+=eStep){
+      const y=py(ge);
+      if(y<PT+6 || y>H-PB-4) continue;
+      ctx.strokeStyle='#ffffff59'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(W-PR,y); ctx.stroke();
+      ctx.fillStyle='#ffffff'; ctx.fillText(Math.round(ge)+'m', 2, y+3);
+    }
+    ctx.textAlign='center';
+  }
   // waymarkers in venster
   for(const w of st.waymarkers){
     if(w.endKm==null || w.endKm<=w.km) continue;
