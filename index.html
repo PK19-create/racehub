@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v30</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v31</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnUndo" title="Laatste wijziging ongedaan maken">↩</button>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
@@ -322,6 +322,28 @@ function undoLast(){
     } else { cur={race:null,stage:null}; showHub(); }
   } else renderHub();
 }
+/* tabblad-synchronisatie: schrijft een ander tabblad (of apparaatherstel) de opslag,
+   dan neemt dit tabblad die staat direct over. Voorkomt dat een oud tabblad werk overschrijft. */
+window.addEventListener('storage', e=>{
+  if(e.key!==LS_KEY || !e.newValue) return;
+  try{ state=JSON.parse(e.newValue); }catch(err){ return; }
+  if(cur.stage){
+    const r=state.races.find(x=>x.id===cur.race.id);
+    const s=r? r.stages.find(x=>x.id===cur.stage.id) : null;
+    if(r&&s){
+      cur.race=r; cur.stage=s;
+      if(!el('liveView').classList.contains('hidden')){
+        live.dists=cumDist(s.track); live.kz=s.kmZero||0; live.totM=live.dists.length?live.dists[live.dists.length-1]:0;
+      } else {
+        el('stT0').value=s.t0time||''; el('stSpeed').value=s.avgSpeed||'';
+        renderStage(false); refreshCrumb();
+      }
+    } else {
+      if(!el('liveView').classList.contains('hidden')) exitLive();
+      cur={race:null,stage:null}; showHub();
+    }
+  } else if(!el('hubView').classList.contains('hidden')) renderHub();
+});
 const uid = () => Math.random().toString(36).slice(2,10);
 const fmtKm = m => (m/1000).toFixed(1).replace('.',',');
 
