@@ -150,7 +150,7 @@ header .crumb a{color:var(--accent2);cursor:pointer;text-decoration:none}
 <body>
 
 <header>
-  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v33</small></div>
+  <div class="logo">RACE<span>HUB</span> <small style="font-size:9px;color:var(--muted);font-weight:400">v34</small></div>
   <div class="crumb" id="crumb"></div>
   <button class="small ghost" id="btnUndo" title="Laatste wijziging ongedaan maken">↩</button>
   <button class="small ghost" id="btnExportAll" title="Backup van alle data">⬇ Backup</button>
@@ -1728,6 +1728,7 @@ function drawLiveProfile(m){
     ctx.font='10px system-ui'; ctx.textAlign='left';
     const levels=[];
     for(let ge=50; ge<=300; ge+=50) levels.push(ge);
+    levels.push(400);
     for(let ge=500; ge<=maxE; ge+=500) levels.push(ge);
     for(const ge of levels){
       if(ge<minE || ge>maxE) continue;
@@ -1737,36 +1738,46 @@ function drawLiveProfile(m){
       ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(W-PR,y); ctx.stroke();
       ctx.fillStyle='#ffffff'; ctx.fillText(ge+'m', 2, y+3);
     }
-    // toplijnen: hoogste punt in venster + top van elke klim, gestippeld met meters
-    const tops=[];
+    // toplijnen: hoogste punt in venster over volle breedte; elke klimtop een kort lijntje, meters erbij
+    ctx.textAlign='center';
+    const placed=[]; // x-posities van geplaatste labels (tegen overlap)
     let hiE=-Infinity, hiM=null;
     for(let i=0;i<track.length;i++){
       if(dists[i]<a||dists[i]>b) continue;
       const e=track[i][2]; if(e==null) continue;
       if(e>hiE){ hiE=e; hiM=dists[i]; }
     }
-    if(hiM!=null) tops.push({m:hiM,e:hiE});
+    if(hiM!=null){
+      const y=py(hiE);
+      if(y>=PT+6 && y<=H-PB-4){
+        ctx.strokeStyle='#ffffffd9'; ctx.lineWidth=1; ctx.setLineDash([4,3]);
+        ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(W-PR,y); ctx.stroke(); ctx.setLineDash([]);
+        const lx=Math.min(Math.max(px(hiM),PL+22),W-PR-22);
+        ctx.fillStyle='#ffffff'; ctx.fillText(Math.round(hiE)+'m', lx, Math.max(PT+8,y-4));
+        placed.push(lx);
+      }
+    }
+    const klimTops=[];
     for(const w of st.waymarkers){
       if(w.type!=='klim' || w.endKm==null) continue;
       const tm=kz+w.endKm*1000;
       if(tm<a||tm>b) continue;
       const p=pointAtDist(track,dists,tm);
-      if(p&&p[2]!=null) tops.push({m:tm,e:p[2]});
+      if(p&&p[2]!=null) klimTops.push({m:tm,e:p[2]});
     }
-    const seen=[];
-    ctx.textAlign='center';
-    for(const t of tops){
-      if(seen.some(e=>Math.abs(e-t.e)<4)) continue;
-      seen.push(t.e);
+    klimTops.sort((x,y)=>y.e-x.e); // hoogste eerst: die krijgen voorrang bij labels
+    for(const t of klimTops){
       const y=py(t.e);
       if(y<PT+6 || y>H-PB-4) continue;
-      ctx.strokeStyle='#ffffffd9'; ctx.lineWidth=1;
-      ctx.setLineDash([4,3]);
-      ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(W-PR,y); ctx.stroke();
+      const x=px(t.m);
+      ctx.strokeStyle='#ffffffcc'; ctx.lineWidth=1; ctx.setLineDash([4,3]);
+      ctx.beginPath(); ctx.moveTo(Math.max(PL,x-28),y); ctx.lineTo(Math.min(W-PR,x+28),y); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle='#ffffff';
-      const lx=Math.min(Math.max(px(t.m),PL+22),W-PR-22);
-      ctx.fillText(Math.round(t.e)+'m', lx, Math.max(PT+8,y-4));
+      if(!placed.some(p2=>Math.abs(p2-x)<44)){
+        ctx.fillStyle='#ffffff';
+        ctx.fillText(Math.round(t.e)+'m', Math.min(Math.max(x,PL+22),W-PR-22), Math.max(PT+8,y-4));
+        placed.push(x);
+      }
     }
   }
   // waymarkers in venster
